@@ -13,7 +13,7 @@ type IncomingBill = {
   id: string;
   createdAt: string;
   source: string;
-  items: Array<{ name: string; quantity: string; unit: string; price: string }>;
+  items: BillItem[];
 };
 
 const AUTO_IMPORT_KEY = "shop-bill-auto-import-connected-v1";
