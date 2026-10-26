@@ -2,8 +2,6 @@ import { randomUUID } from "node:crypto";
 import { NextResponse } from "next/server";
 import { enqueueRemoteBill, type RemoteBill, type RemoteBillItem } from "@/lib/remote-bills";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 
 type IncomingItem = {
   name?: unknown;
