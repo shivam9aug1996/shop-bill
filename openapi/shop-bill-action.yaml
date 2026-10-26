@@ -1,0 +1,60 @@
+openapi: 3.1.0
+info:
+  title: Shop Bill Import API
+  version: 1.0.0
+  description: Send a prepared shop bill to the user's paired Shop Bill website.
+servers:
+  - url: https://shop-bill-phi.vercel.app
+paths:
+  /api/bills/import:
+    post:
+      operationId: importShopBill
+      summary: Import a bill into Shop Bill
+      description: Queues the bill for the paired Shop Bill browser. The user must open the website and connect Auto Import first.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [items]
+              properties:
+                source:
+                  type: string
+                  default: ChatGPT
+                items:
+                  type: array
+                  minItems: 1
+                  maxItems: 100
+                  items:
+                    type: object
+                    required: [name, quantity, unit, price]
+                    properties:
+                      name:
+                        type: string
+                      quantity:
+                        type: number
+                        exclusiveMinimum: 0
+                      unit:
+                        type: string
+                        description: Unit label such as gram, kg, litre, or piece.
+                      price:
+                        type: number
+                        minimum: 0
+                        description: Total price for this line, not unit price.
+      responses:
+        "202":
+          description: Bill queued for the website.
+        "400":
+          description: Invalid bill data.
+        "401":
+          description: Invalid API key.
+        "503":
+          description: Server storage is not configured or unavailable.
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
