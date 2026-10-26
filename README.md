@@ -1,4 +1,6 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# shop-bill
+
+Paste ChatGPT shop bills, edit line items, and share totals on WhatsApp. Built with [Next.js](https://nextjs.org).
 
 ## Getting Started
 
