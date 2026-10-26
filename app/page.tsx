@@ -7,32 +7,18 @@ import {
   UNITS,
   type BillItem,
 } from "@/lib/bill";
-import { useCallback, useEffect, useState, type FormEvent } from "react";
-
-type IncomingBill = {
-  id: string;
-  createdAt: string;
-  source: string;
-  items: BillItem[];
-};
-
-const AUTO_IMPORT_KEY = "shop-bill-auto-import-connected-v1";
+import { useEffect, useState } from "react";
 
 export default function Home() {
   const [items, setItems] = useState<BillItem[]>([]);
   const [pasteText, setPasteText] = useState("");
   const [message, setMessage] = useState("");
   const [loaded, setLoaded] = useState(false);
-  const [pin, setPin] = useState("");
-  const [autoConnected, setAutoConnected] = useState(false);
-  const [connecting, setConnecting] = useState(false);
-  const [incomingBill, setIncomingBill] = useState<IncomingBill | null>(null);
 
   useEffect(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) setItems(JSON.parse(saved));
-      setAutoConnected(localStorage.getItem(AUTO_IMPORT_KEY) === "true");
     } catch {
       console.error("Could not load saved bill");
     }
@@ -45,43 +31,6 @@ export default function Home() {
   }, [items, loaded]);
 
   const total = billGrandTotal(items);
-
-  const pollForBill = useCallback(async () => {
-    try {
-      const response = await fetch("/api/bills/pending", { cache: "no-store" });
-      if (response.status === 401) {
-        setAutoConnected(false);
-        localStorage.removeItem(AUTO_IMPORT_KEY);
-        return;
-      }
-      if (!response.ok) return;
-      const data = (await response.json()) as { bill: IncomingBill | null };
-      if (!data.bill) return;
-
-      const bill = data.bill;
-      const importedItems: BillItem[] = bill.items.map((item) => ({
-        ...item,
-        id: crypto.randomUUID(),
-      }));
-
-      if (items.length === 0) {
-        setItems(importedItems);
-        setMessage(`ChatGPT se ${importedItems.length} items ka bill aa gaya.`);
-      } else {
-        setIncomingBill({ ...bill, items: importedItems });
-        setMessage("Naya bill aa gaya hai. Apne current bill ko replace karne se pehle check karein.");
-      }
-    } catch {
-      // A temporary network error should not interrupt normal billing.
-    }
-  }, [items.length]);
-
-  useEffect(() => {
-    if (!loaded || !autoConnected || incomingBill) return;
-    void pollForBill();
-    const timer = window.setInterval(() => void pollForBill(), 4000);
-    return () => window.clearInterval(timer);
-  }, [loaded, autoConnected, incomingBill, pollForBill]);
 
   function updateItem(id: string, field: keyof BillItem, value: string) {
     setItems((current) =>
@@ -105,48 +54,6 @@ export default function Home() {
     setItems(parsed);
     setPasteText("");
     setMessage(`${parsed.length} items successfully import ho gaye.`);
-  }
-
-  async function connectAutoImport(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setConnecting(true);
-    setMessage("");
-    try {
-      const response = await fetch("/api/bills/connect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pin }),
-      });
-      const data = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        setMessage(data.error || "Auto Import connect nahi ho paya.");
-        return;
-      }
-      localStorage.setItem(AUTO_IMPORT_KEY, "true");
-      setAutoConnected(true);
-      setPin("");
-      setMessage("Auto Import connected. ChatGPT se bheje gaye bills yahan aayenge.");
-    } catch {
-      setMessage("Network error. Dobara try karein.");
-    } finally {
-      setConnecting(false);
-    }
-  }
-
-  function disconnectAutoImport() {
-    localStorage.removeItem(AUTO_IMPORT_KEY);
-    setAutoConnected(false);
-    setMessage("Auto Import polling band kar di gayi.");
-  }
-
-  function loadIncomingBill() {
-    if (!incomingBill) return;
-    if (items.length > 0 && !confirm("Current bill replace karna hai? Pehle current bill copy/share kar lein.")) {
-      return;
-    }
-    setItems(incomingBill.items);
-    setMessage(`${incomingBill.items.length} incoming items load ho gaye.`);
-    setIncomingBill(null);
   }
 
   function getBillText() {
@@ -187,53 +94,6 @@ export default function Home() {
             Paste bill, edit items, calculate total and share on WhatsApp.
           </p>
         </header>
-
-        <section className="rounded-2xl border border-emerald-100 bg-white p-5 shadow-sm">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 className="text-lg font-semibold">ChatGPT Auto Import</h2>
-              <p className="mt-1 max-w-2xl text-sm text-slate-600">
-                Pair this browser once. When your configured ChatGPT Action sends a bill, it will appear here automatically.
-              </p>
-            </div>
-            <span className={`rounded-full px-3 py-1 text-xs font-semibold ${autoConnected ? "bg-emerald-100 text-emerald-800" : "bg-slate-100 text-slate-600"}`}>
-              {autoConnected ? "● Connected" : "Not connected"}
-            </span>
-          </div>
-
-          {!autoConnected ? (
-            <form onSubmit={connectAutoImport} className="mt-4 flex flex-col gap-2 sm:flex-row">
-              <label className="sr-only" htmlFor="pairing-pin">Auto Import pairing PIN</label>
-              <input
-                id="pairing-pin"
-                type="password"
-                inputMode="numeric"
-                autoComplete="one-time-code"
-                value={pin}
-                onChange={(event) => setPin(event.target.value)}
-                placeholder="Enter your Vercel pairing PIN"
-                className="min-w-0 flex-1 rounded-xl border border-slate-300 px-3 py-2.5 outline-none focus:border-emerald-600"
-                required
-              />
-              <button disabled={connecting} className="rounded-xl bg-emerald-700 px-4 py-2.5 font-semibold text-white disabled:opacity-60">
-                {connecting ? "Connecting..." : "Connect Auto Import"}
-              </button>
-            </form>
-          ) : (
-            <div className="mt-4 flex flex-wrap items-center gap-3">
-              <p className="text-sm text-emerald-800">Listening for bills in this browser…</p>
-              <button type="button" onClick={disconnectAutoImport} className="rounded-xl border border-slate-300 px-3 py-2 text-sm">Disconnect</button>
-            </div>
-          )}
-
-          {incomingBill && (
-            <div className="mt-4 rounded-xl border border-amber-300 bg-amber-50 p-4">
-              <p className="font-semibold">Incoming bill: {incomingBill.items.length} items</p>
-              <p className="mt-1 text-sm text-slate-700">A bill arrived from ChatGPT, but your current bill is not empty. Loading it will replace the current bill.</p>
-              <button type="button" onClick={loadIncomingBill} className="mt-3 rounded-xl bg-amber-700 px-4 py-2.5 font-semibold text-white">Review and load incoming bill</button>
-            </div>
-          )}
-        </section>
 
         <section className="rounded-2xl bg-white p-5 shadow-sm">
           <h2 className="mb-3 text-lg font-semibold">Paste ChatGPT Bill</h2>
@@ -294,7 +154,7 @@ export default function Home() {
             <button type="button" onClick={clearBill} className="rounded-xl bg-red-50 px-4 py-3 font-semibold text-red-700">Clear Bill</button>
           </div>
           <p className="mt-4 text-xs text-slate-500">
-            Bill changes are saved in this browser. Auto Import receives bills through the connected browser session; it does not sync your manually edited bill to ChatGPT.
+            Bill changes are saved in this browser.
           </p>
         </section>
       </div>
