@@ -20,6 +20,23 @@ export const UNITS = [
   "Dozen",
 ] as const;
 
+export function normalizeUnit(value: string): string {
+  const raw = value.trim();
+  const key = raw.toLowerCase();
+  const unitMap: Record<string, string> = {
+    kg: "kg", kilo: "kg", kilos: "kg", kilogram: "kg", kilograms: "kg", "किलो": "kg", "किलोग्राम": "kg",
+    g: "g", gm: "g", gram: "g", grams: "g", "ग्राम": "g",
+    mg: "mg", "मिलीग्राम": "mg",
+    l: "L", litre: "L", liter: "L", "लीटर": "L",
+    ml: "ml", "मिलीलीटर": "ml",
+    piece: "Piece", pieces: "Piece", pcs: "Piece", "पीस": "Piece", "नग": "Piece",
+    packet: "Packet", packets: "Packet", "पैकेट": "Packet",
+    box: "Box", boxes: "Box", "बॉक्स": "Box",
+    dozen: "Dozen", "दर्जन": "Dozen",
+  };
+  return unitMap[key] || ((UNITS as readonly string[]).includes(raw) ? raw : "Piece");
+}
+
 /** Sum of each row's price (line total), not quantity × rate. */
 export function billGrandTotal(items: BillItem[]): number {
   return items.reduce((sum, item) => sum + (Number(item.price) || 0), 0);
@@ -76,7 +93,7 @@ export function parseQuantity(value: string) {
 
   return {
     quantity: match[1],
-    unit: unitMap[rawUnit] || rawUnit || "Piece",
+    unit: normalizeUnit(rawUnit),
   };
 }
 
