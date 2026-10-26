@@ -9,10 +9,14 @@ import {
 } from "@/lib/bill";
 import { useEffect, useState } from "react";
 
+const inputClass =
+  "w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 hover:border-slate-300 focus:border-emerald-600 focus:ring-4 focus:ring-emerald-600/10";
+
 export default function Home() {
   const [items, setItems] = useState<BillItem[]>([]);
   const [pasteText, setPasteText] = useState("");
   const [message, setMessage] = useState("");
+  const [messageType, setMessageType] = useState<"success" | "error">("success");
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
@@ -48,27 +52,31 @@ export default function Home() {
   function importBill() {
     const parsed = parseBill(pasteText);
     if (!parsed.length) {
-      setMessage("Bill parse nahi hua. ChatGPT ki table copy karke dobara try karein.");
+      setMessageType("error");
+      setMessage("बिल समझ नहीं आया। ChatGPT की पूरी टेबल कॉपी करके दोबारा कोशिश करें।");
       return;
     }
     setItems(parsed);
     setPasteText("");
-    setMessage(`${parsed.length} items successfully import ho gaye.`);
+    setMessageType("success");
+    setMessage(`${parsed.length} सामान सफलतापूर्वक इम्पोर्ट हो गया।`);
   }
 
   function getBillText() {
     const lines = items
       .filter((item) => item.name.trim())
       .map((item, index) => `${index + 1}. ${item.name} — ${item.quantity} ${item.unit} — ₹${Number(item.price) || 0}`);
-    return `🧾 SHOP BILL\\n\\n${lines.join("\\n")}\\n\\nTotal: ₹${total.toLocaleString("en-IN")}`;
+    return `🧾 दुकान का बिल\\n\\n${lines.join("\\n")}\\n\\nकुल बिल: ₹${total.toLocaleString("en-IN")}`;
   }
 
   async function copyBill() {
     try {
       await navigator.clipboard.writeText(getBillText());
-      setMessage("Bill copied! Ab ise ChatGPT ya WhatsApp mein paste karein.");
+      setMessageType("success");
+      setMessage("बिल कॉपी हो गया। अब इसे WhatsApp पर पेस्ट कर सकते हैं।");
     } catch {
-      setMessage("Copy nahi hua. Browser clipboard permission check karein.");
+      setMessageType("error");
+      setMessage("कॉपी नहीं हुआ। ब्राउज़र की clipboard permission जाँचें।");
     }
   }
 
@@ -77,85 +85,118 @@ export default function Home() {
   }
 
   function clearBill() {
-    if (confirm("Kya aap poora bill clear karna chahte hain?")) {
+    if (confirm("क्या आप पूरा बिल साफ़ करना चाहते हैं?")) {
       setItems([]);
-      setMessage("Bill clear ho gaya.");
+      setMessageType("success");
+      setMessage("बिल साफ़ हो गया।");
     }
   }
 
-  if (!loaded) return <main className="p-8">Loading bill...</main>;
+  if (!loaded) return <main className="grid min-h-screen place-items-center bg-slate-50 text-slate-500">बिल लोड हो रहा है…</main>;
 
   return (
-    <main className="min-h-screen bg-slate-100 px-4 py-8 text-slate-900">
-      <div className="mx-auto max-w-5xl space-y-6">
-        <header>
-          <h1 className="text-3xl font-bold">Shop Billing</h1>
-          <p className="mt-2 text-sm text-slate-600">
-            Paste bill, edit items, calculate total and share on WhatsApp.
-          </p>
+    <main className="min-h-screen bg-slate-50 px-3 py-6 text-slate-900 sm:px-6 sm:py-10">
+      <div className="mx-auto max-w-6xl space-y-6">
+        <header className="flex flex-col gap-4 border-b border-slate-200 pb-6 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">
+              <span className="h-2 w-2 rounded-full bg-emerald-600" /> दुकान का हिसाब
+            </div>
+            <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Shop Billing</h1>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500">
+              बिल इम्पोर्ट करें, सामान और कीमत बदलें, फिर कुल जोड़कर WhatsApp पर भेजें।
+            </p>
+          </div>
+          <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+            <p className="text-xs font-medium text-slate-500">कुल सामान</p>
+            <p className="mt-1 text-2xl font-bold">{items.length} <span className="text-sm font-medium text-slate-500">आइटम</span></p>
+          </div>
         </header>
 
-        <section className="rounded-2xl bg-white p-5 shadow-sm">
-          <h2 className="mb-3 text-lg font-semibold">Paste ChatGPT Bill</h2>
+        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+          <div className="mb-4">
+            <h2 className="text-lg font-bold">ChatGPT से बिल इम्पोर्ट करें</h2>
+            <p className="mt-1 text-sm text-slate-500">बिल की टेबल कॉपी करके नीचे पेस्ट करें।</p>
+          </div>
           <textarea
             value={pasteText}
             onChange={(event) => setPasteText(event.target.value)}
-            placeholder="ChatGPT se poori bill table copy karke yahan paste karein..."
-            className="min-h-36 w-full rounded-xl border border-slate-300 p-3 outline-none focus:border-emerald-600"
+            placeholder="यहाँ पूरा बिल पेस्ट करें…"
+            className={`${inputClass} min-h-36 resize-y leading-6`}
           />
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button type="button" onClick={importBill} className="rounded-xl bg-emerald-700 px-4 py-2.5 font-semibold text-white">Import Bill</button>
-            <button type="button" onClick={() => setPasteText("")} className="rounded-xl bg-slate-100 px-4 py-2.5">Clear Text</button>
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+            <button type="button" onClick={importBill} className="rounded-xl bg-emerald-700 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800 focus:outline-none focus:ring-4 focus:ring-emerald-700/20">
+              बिल इम्पोर्ट करें
+            </button>
+            <button type="button" onClick={() => { setPasteText(""); setMessage(""); }} className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+              टेक्स्ट साफ़ करें
+            </button>
           </div>
-          {message && <p aria-live="polite" className="mt-3 text-sm text-emerald-700">{message}</p>}
+          {message && (
+            <p aria-live="polite" className={`mt-4 rounded-xl px-4 py-3 text-sm font-medium ${messageType === "error" ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-800"}`}>
+              {message}
+            </p>
+          )}
         </section>
 
-        <section className="rounded-2xl bg-white p-5 shadow-sm">
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-xl font-semibold">Bill Items</h2>
-            <button type="button" onClick={addItem} className="rounded-xl bg-slate-900 px-4 py-2.5 font-semibold text-white">+ Add Item</button>
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex flex-col gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+            <div>
+              <h2 className="text-xl font-bold">बिल के सामान</h2>
+              <p className="mt-1 text-sm text-slate-500">हर पंक्ति में कीमत उस सामान की पूरी रकम है।</p>
+            </div>
+            <button type="button" onClick={addItem} className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-700">
+              <span className="text-lg leading-none">+</span> सामान जोड़ें
+            </button>
           </div>
-          <p className="mb-4 text-sm text-slate-600">
-            Price column = line total (poori row ki rakam). Quantity se multiply nahi hota.
-          </p>
+
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[760px] border-collapse text-left">
+            <table className="w-full min-w-[700px] border-collapse text-left">
               <thead>
-                <tr className="border-b bg-slate-50 text-sm text-slate-600">
-                  <th className="p-3">#</th><th className="p-3">Item</th><th className="p-3">Quantity</th><th className="p-3">Unit</th><th className="p-3 text-right">Line total (₹)</th><th className="p-3">Delete</th>
+                <tr className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                  <th className="w-12 px-4 py-3">#</th>
+                  <th className="px-3 py-3">सामान का नाम</th>
+                  <th className="w-32 px-3 py-3">मात्रा</th>
+                  <th className="w-36 px-3 py-3">इकाई</th>
+                  <th className="w-40 px-3 py-3 text-right">रकम (₹)</th>
+                  <th className="w-20 px-4 py-3 text-center">हटाएँ</th>
                 </tr>
               </thead>
-              <tbody>
+              <tbody className="divide-y divide-slate-100">
                 {items.map((item, index) => (
-                  <tr key={item.id} className="border-b last:border-0">
-                    <td className="p-2">{index + 1}</td>
-                    <td className="p-2"><input value={item.name} onChange={(event) => updateItem(item.id, "name", event.target.value)} placeholder="Item name" aria-label={`Item ${index + 1} name`} className="w-40 rounded-lg border p-2" /></td>
-                    <td className="p-2"><input type="number" min="0" step="any" value={item.quantity} onChange={(event) => updateItem(item.id, "quantity", event.target.value)} aria-label={`Item ${index + 1} quantity`} className="w-24 rounded-lg border p-2" /></td>
-                    <td className="p-2">
-                      <select value={item.unit} onChange={(event) => updateItem(item.id, "unit", event.target.value)} aria-label={`Item ${index + 1} unit`} className="w-28 rounded-lg border bg-white p-2">
+                  <tr key={item.id} className="transition-colors hover:bg-slate-50/70">
+                    <td className="px-4 py-3 text-sm font-medium text-slate-400">{index + 1}</td>
+                    <td className="px-3 py-3"><input value={item.name} onChange={(event) => updateItem(item.id, "name", event.target.value)} placeholder="जैसे चीनी" aria-label={`सामान ${index + 1} का नाम`} className={inputClass} /></td>
+                    <td className="px-3 py-3"><input type="number" min="0" step="any" value={item.quantity} onChange={(event) => updateItem(item.id, "quantity", event.target.value)} aria-label={`सामान ${index + 1} की मात्रा`} className={inputClass} /></td>
+                    <td className="px-3 py-3">
+                      <select value={item.unit} onChange={(event) => updateItem(item.id, "unit", event.target.value)} aria-label={`सामान ${index + 1} की इकाई`} className={`${inputClass} cursor-pointer`}>
                         {[...new Set([...UNITS, item.unit])].map((unit) => <option key={unit} value={unit}>{unit}</option>)}
                       </select>
                     </td>
-                    <td className="p-2"><input type="number" min="0" step="0.01" value={item.price} onChange={(event) => updateItem(item.id, "price", event.target.value)} aria-label={`Item ${index + 1} line total`} className="w-28 rounded-lg border p-2 text-right" /></td>
-                    <td className="p-2"><button type="button" onClick={() => setItems((current) => current.filter((row) => row.id !== item.id))} className="rounded-lg bg-red-50 px-3 py-2 text-red-700" aria-label={`Delete ${item.name || "item"}`}>✕</button></td>
+                    <td className="px-3 py-3"><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">₹</span><input type="number" min="0" step="0.01" value={item.price} onChange={(event) => updateItem(item.id, "price", event.target.value)} aria-label={`सामान ${index + 1} की रकम`} className={`${inputClass} pl-7 text-right font-semibold tabular-nums`} /></div></td>
+                    <td className="px-4 py-3 text-center"><button type="button" onClick={() => setItems((current) => current.filter((row) => row.id !== item.id))} className="inline-flex h-10 w-10 items-center justify-center rounded-xl text-lg text-slate-400 transition hover:bg-red-50 hover:text-red-600 focus:outline-none focus:ring-4 focus:ring-red-100" aria-label={`${item.name || "सामान"} हटाएँ`}>×</button></td>
                   </tr>
                 ))}
-                {items.length === 0 && <tr><td colSpan={6} className="p-8 text-center text-slate-500">No items yet. Paste a bill above or add an item.</td></tr>}
+                {items.length === 0 && <tr><td colSpan={6} className="px-6 py-14 text-center"><div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-slate-100 text-2xl">🧾</div><p className="font-semibold text-slate-700">अभी कोई सामान नहीं है</p><p className="mt-1 text-sm text-slate-500">ऊपर बिल पेस्ट करें या “सामान जोड़ें” दबाएँ।</p></td></tr>}
               </tbody>
             </table>
           </div>
-          <div className="mt-6 flex flex-wrap items-center justify-between gap-4 border-t pt-5">
-            <span className="text-lg font-semibold">Grand Total</span>
-            <span className="text-3xl font-bold text-emerald-700">₹{total.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>
+
+          <div className="border-t border-slate-100 bg-slate-50/70 p-4 sm:p-6">
+            <div className="flex flex-col gap-2 rounded-2xl border border-emerald-100 bg-white p-5 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-sm font-medium text-slate-500">बिल की कुल रकम</p>
+                <p className="mt-1 text-xs text-slate-400">सभी सामान की रकम का जोड़</p>
+              </div>
+              <p className="text-3xl font-bold tracking-tight text-emerald-700 sm:text-4xl">₹{total.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</p>
+            </div>
+            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+              <button type="button" onClick={copyBill} className="rounded-xl bg-slate-900 px-4 py-3 font-semibold text-white transition hover:bg-slate-700">बिल कॉपी करें</button>
+              <button type="button" onClick={shareWhatsApp} className="rounded-xl bg-green-600 px-4 py-3 font-semibold text-white transition hover:bg-green-700">WhatsApp पर भेजें</button>
+              <button type="button" onClick={clearBill} className="rounded-xl border border-red-100 bg-white px-4 py-3 font-semibold text-red-600 transition hover:bg-red-50">पूरा बिल साफ़ करें</button>
+            </div>
+            <p className="mt-4 text-center text-xs text-slate-400">आपके बदलाव इसी ब्राउज़र में सेव होते हैं।</p>
           </div>
-          <div className="mt-5 flex flex-wrap gap-3">
-            <button type="button" onClick={copyBill} className="rounded-xl bg-slate-900 px-4 py-3 font-semibold text-white">Copy Bill</button>
-            <button type="button" onClick={shareWhatsApp} className="rounded-xl bg-green-600 px-4 py-3 font-semibold text-white">Share on WhatsApp</button>
-            <button type="button" onClick={clearBill} className="rounded-xl bg-red-50 px-4 py-3 font-semibold text-red-700">Clear Bill</button>
-          </div>
-          <p className="mt-4 text-xs text-slate-500">
-            Bill changes are saved in this browser.
-          </p>
         </section>
       </div>
     </main>
