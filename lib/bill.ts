@@ -120,7 +120,7 @@ export function parseBill(text: string): BillItem[] {
       if (dashParts.length >= 2) {
         const name = dashParts[0].trim();
         const details = dashParts.slice(1).join(" — ").trim();
-        const multiplicationMatch = details.match(/^(.+?)\s*[×x]\s*₹?\s*[\d,.]+\s*\/\s*[^=]+$/i);
+        const multiplicationMatch = details.match(/^(.+?)\s*[×x]\s*₹?\s*[\d,.]+(?:\s*\/\s*[^=]+)?$/i);
         if (multiplicationMatch) {
           const item = makeBillItem(name, multiplicationMatch[1].trim(), totalText);
           if (item) {
