@@ -22,7 +22,7 @@ export default function Home() {
   useEffect(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) setItems(JSON.parse(saved));
+      if (saved) setItems((JSON.parse(saved) as BillItem[]).map((item) => ({ ...item, unit: ({ "किलो": "kg", "किलोग्राम": "kg", "ग्राम": "g", "मिलीग्राम": "mg", "लीटर": "L", "मिलीलीटर": "ml", "पीस": "Piece", "पैकेट": "Packet", "बॉक्स": "Box", "दर्जन": "Dozen" } as Record<string, string>)[item.unit] || item.unit })));
     } catch {
       console.error("Could not load saved bill");
     }
