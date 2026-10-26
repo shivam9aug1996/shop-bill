@@ -141,7 +141,7 @@ export function parseBill(text: string): BillItem[] {
       if (columns.length >= 4) {
         name = columns[0];
         quantity = columns[1];
-        unit = columns[2] || "Piece";
+        unit = normalizeUnit(columns[2] || "Piece");
         price = columns[columns.length - 1];
       } else {
         name = columns[0];
