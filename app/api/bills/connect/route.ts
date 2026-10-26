@@ -7,8 +7,6 @@ import {
   getSessionMaxAge,
 } from "@/lib/remote-bills";
 
-export const runtime = "nodejs";
-export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
   const expectedPin = process.env.BILL_IMPORT_PIN;
