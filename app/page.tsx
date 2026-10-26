@@ -2,6 +2,7 @@
 
 import {
   billGrandTotal,
+  normalizeUnit,
   parseBill,
   STORAGE_KEY,
   UNITS,
@@ -170,7 +171,7 @@ export default function Home() {
                     <td className="px-3 py-3"><input type="number" min="0" step="any" value={item.quantity} onChange={(event) => updateItem(item.id, "quantity", event.target.value)} aria-label={`सामान ${index + 1} की मात्रा`} className={inputClass} /></td>
                     <td className="px-3 py-3">
                       <select value={item.unit} onChange={(event) => updateItem(item.id, "unit", event.target.value)} aria-label={`Item ${index + 1} unit`} className={`${inputClass} cursor-pointer`}>
-                        {[...new Set([...UNITS, item.unit])].map((unit) => <option key={unit} value={unit}>{unit}</option>)}
+                        {UNITS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
                       </select>
                     </td>
                     <td className="px-3 py-3"><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">₹</span><input type="number" min="0" step="0.01" value={item.price} onChange={(event) => updateItem(item.id, "price", event.target.value)} aria-label={`सामान ${index + 1} की रकम`} className={`${inputClass} pl-7 text-right font-semibold tabular-nums`} /></div></td>
