@@ -157,7 +157,7 @@ export default function Home() {
                   <th className="w-12 px-4 py-3">#</th>
                   <th className="px-3 py-3">सामान का नाम</th>
                   <th className="w-32 px-3 py-3">मात्रा</th>
-                  <th className="w-36 px-3 py-3">इकाई</th>
+                  <th className="w-36 px-3 py-3">Unit</th>
                   <th className="w-40 px-3 py-3 text-right">रकम (₹)</th>
                   <th className="w-20 px-4 py-3 text-center">हटाएँ</th>
                 </tr>
@@ -169,7 +169,7 @@ export default function Home() {
                     <td className="px-3 py-3"><input value={item.name} onChange={(event) => updateItem(item.id, "name", event.target.value)} placeholder="जैसे चीनी" aria-label={`सामान ${index + 1} का नाम`} className={inputClass} /></td>
                     <td className="px-3 py-3"><input type="number" min="0" step="any" value={item.quantity} onChange={(event) => updateItem(item.id, "quantity", event.target.value)} aria-label={`सामान ${index + 1} की मात्रा`} className={inputClass} /></td>
                     <td className="px-3 py-3">
-                      <select value={item.unit} onChange={(event) => updateItem(item.id, "unit", event.target.value)} aria-label={`सामान ${index + 1} की इकाई`} className={`${inputClass} cursor-pointer`}>
+                      <select value={item.unit} onChange={(event) => updateItem(item.id, "unit", event.target.value)} aria-label={`Item ${index + 1} unit`} className={`${inputClass} cursor-pointer`}>
                         {[...new Set([...UNITS, item.unit])].map((unit) => <option key={unit} value={unit}>{unit}</option>)}
                       </select>
                     </td>
