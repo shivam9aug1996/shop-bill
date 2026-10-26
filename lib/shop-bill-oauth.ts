@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 const RESOURCE = "https://shop-bill-phi.vercel.app/api/mcp";
 const ISSUER = "https://shop-bill-phi.vercel.app";
@@ -117,14 +117,6 @@ export function getOAuthIssuer(): string {
 
 export function verifyPkce(verifier: string, challenge: string): boolean {
   if (!/^[A-Za-z0-9._~-]{43,128}$/.test(verifier)) return false;
-  const actual = createHmac("sha256", "pkce-unused").update(verifier).digest("base64url");
-  // PKCE S256 is plain SHA-256, not HMAC.
-  const expected = Buffer.from(verifier).length ? requireSha256(verifier) : "";
+  const expected = createHash("sha256").update(verifier).digest("base64url");
   return constantTimeEqual(expected, challenge);
-}
-
-function requireSha256(value: string): string {
-  // Avoid non-standard crypto APIs; digest is base64url as required by RFC 7636.
-  const { createHash } = require("node:crypto") as typeof import("node:crypto");
-  return createHash("sha256").update(value).digest("base64url");
 }
