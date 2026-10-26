@@ -7,7 +7,7 @@ import {
   UNITS,
   type BillItem,
 } from "@/lib/bill";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 
 type IncomingBill = {
   id: string;
@@ -107,7 +107,7 @@ export default function Home() {
     setMessage(`${parsed.length} items successfully import ho gaye.`);
   }
 
-  async function connectAutoImport(event: React.FormEvent<HTMLFormElement>) {
+  async function connectAutoImport(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setConnecting(true);
     setMessage("");
