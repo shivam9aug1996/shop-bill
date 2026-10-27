@@ -61,7 +61,14 @@ export default function Home() {
       };
       setConnected(true);
       if (!data.bill || !Array.isArray(data.bill.items)) return;
-      if (lastImportedBill.current === data.bill.createdAt) return;
+      const importedAt = data.bill.createdAt;
+      if (
+        lastImportedBill.current === importedAt ||
+        localStorage.getItem("shop-bill-last-imported-at") === importedAt
+      ) {
+        lastImportedBill.current = importedAt;
+        return;
+      }
 
       const importedItems: BillItem[] = data.bill.items.map((item) => ({
         id: crypto.randomUUID(),
@@ -70,7 +77,8 @@ export default function Home() {
         unit: normalizeUnit(item.unit),
         price: String(item.price),
       }));
-      lastImportedBill.current = data.bill.createdAt;
+      lastImportedBill.current = importedAt;
+      localStorage.setItem("shop-bill-last-imported-at", importedAt);
       setItems(importedItems);
       setMessageType("success");
       setMessage(`Redis से ${importedItems.length} सामान वाला बिल इम्पोर्ट हो गया।`);
