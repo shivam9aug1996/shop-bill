@@ -97,40 +97,74 @@ export function parseQuantity(value: string) {
   };
 }
 
+function makeBillItem(name: string, quantityText: string, priceText: string): BillItem | null {
+  const cleanName = name.replace(/\*\*/g, "").replace(/`/g, "").trim();
+  const parsedQuantity = parseQuantity(quantityText.replace(/\*\*/g, "").trim());
+  const numericPrice = priceText.replace(/[₹,\s]/g, "");
+
+  if (!cleanName || !/^\d+(\.\d+)?$/.test(numericPrice)) return null;
+
+  return {
+    id: crypto.randomUUID(),
+    name: cleanName,
+    quantity: parsedQuantity.quantity,
+    unit: parsedQuantity.unit,
+    price: numericPrice,
+  };
+}
+
 export function parseBill(text: string): BillItem[] {
   const result: BillItem[] = [];
 
   for (const originalLine of text.split(/\r?\n/)) {
     let line = originalLine.trim();
-
     if (!line) continue;
 
+    // ChatGPT's readable bill format:
+    // 1. सूजी — 2 kg × ₹40/kg = ₹80
+    // Price stored is the final line total (₹80), not the per-unit rate (₹40/kg).
+    const readableLine = line
+      .replace(/^\*\*/, "")
+      .replace(/\*\*$/, "")
+      .replace(/^\s*(?:[-*]\s*)?\d+[.)]\s*/, "")
+      .trim();
+    const equalsIndex = readableLine.lastIndexOf("=");
+    if (equalsIndex !== -1) {
+      const left = readableLine.slice(0, equalsIndex).trim();
+      const totalText = readableLine.slice(equalsIndex + 1).trim();
+      const dashParts = left.split(/\s+[—–-]\s+/);
+
+      if (dashParts.length >= 2) {
+        const name = dashParts[0].trim();
+        const details = dashParts.slice(1).join(" — ").trim();
+        const multiplicationMatch = details.match(/^(.+?)\s*[×x]\s*₹?\s*[\d,.]+(?:\s*\/\s*[^=]+)?$/i);
+        if (multiplicationMatch) {
+          const item = makeBillItem(name, multiplicationMatch[1].trim(), totalText);
+          if (item) {
+            result.push(item);
+            continue;
+          }
+        }
+      }
+    }
+
     if (line.includes("|")) {
-      let columns = line
+      const columns = line
         .split("|")
         .map((part) => part.trim().replace(/\*\*/g, "").replace(/`/g, ""));
 
       if (columns[0] === "") columns.shift();
       if (columns[columns.length - 1] === "") columns.pop();
 
-      if (columns.every((part) => /^:?-{2,}:?$/.test(part))) {
-        continue;
-      }
+      if (columns.every((part) => /^:?-{2,}:?$/.test(part))) continue;
 
       if (
         columns.some((part) =>
-          /^(क्र\.?|क्रम|सामान|item|product|नाम|मात्रा|quantity|वजन|unit|इकाई|कीमत|price|रकम|amount)$/i.test(
-            part
-          )
+          /^(क्र\.?|क्रम|सामान|item|product|नाम|मात्रा|quantity|वजन|unit|इकाई|कीमत|price|रकम|amount)$/i.test(part)
         )
-      ) {
-        continue;
-      }
+      ) continue;
 
-      if (columns.length >= 3 && /^\d+[\.)]?$/.test(columns[0])) {
-        columns.shift();
-      }
-
+      if (columns.length >= 3 && /^\d+[.)]?$/.test(columns[0])) columns.shift();
       if (columns.length < 3) continue;
 
       let name = "";
@@ -145,7 +179,6 @@ export function parseBill(text: string): BillItem[] {
         price = columns[columns.length - 1];
       } else {
         name = columns[0];
-
         const parsedQuantity = parseQuantity(columns[1]);
         quantity = parsedQuantity.quantity;
         unit = parsedQuantity.unit;
@@ -153,7 +186,6 @@ export function parseBill(text: string): BillItem[] {
       }
 
       const numericPrice = price.replace(/[₹,\s]/g, "");
-
       if (!name || !/^\d+(\.\d+)?$/.test(numericPrice)) continue;
 
       result.push({
@@ -163,29 +195,15 @@ export function parseBill(text: string): BillItem[] {
         unit,
         price: numericPrice,
       });
-
       continue;
     }
 
-    line = line.replace(/^\d+[\.)]\s*/, "");
-
+    line = line.replace(/^\d+[.)]\s*/, "");
     const parts = line.split(/\s+[—–-]\s+/);
-
     if (parts.length < 3) continue;
 
-    const name = parts[0].trim();
-    const parsedQuantity = parseQuantity(parts[1]);
-    const price = parts[parts.length - 1].replace(/[₹,\s]/g, "");
-
-    if (!name || !/^\d+(\.\d+)?$/.test(price)) continue;
-
-    result.push({
-      id: crypto.randomUUID(),
-      name,
-      quantity: parsedQuantity.quantity,
-      unit: parsedQuantity.unit,
-      price,
-    });
+    const item = makeBillItem(parts[0], parts[1], parts[parts.length - 1]);
+    if (item) result.push(item);
   }
 
   return result;
