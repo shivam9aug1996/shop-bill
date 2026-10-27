@@ -22,6 +22,8 @@ export default function Home() {
   const [connected, setConnected] = useState(false);
   const [pin, setPin] = useState("");
   const [connecting, setConnecting] = useState(false);
+  const [checkingRedis, setCheckingRedis] = useState(false);
+  const [lastRedisCheck, setLastRedisCheck] = useState<string | null>(null);
   const lastImportedBill = useRef<string | null>(null);
 
   useEffect(() => {
@@ -94,9 +96,19 @@ export default function Home() {
   useEffect(() => {
     if (!connected) return;
     void pollPendingBill();
-    const interval = window.setInterval(() => void pollPendingBill(), 4000);
+    const interval = window.setInterval(() => void pollPendingBill(), 15000);
     return () => window.clearInterval(interval);
   }, [connected, pollPendingBill]);
+
+  async function checkRedisNow() {
+    setCheckingRedis(true);
+    try {
+      await pollPendingBill();
+    } finally {
+      setLastRedisCheck(new Date().toLocaleTimeString("en-IN"));
+      setCheckingRedis(false);
+    }
+  }
 
   async function connectAutoImport(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -216,13 +228,18 @@ export default function Home() {
             <div>
               <h2 className="font-bold">Redis Auto Import</h2>
               <p className="mt-1 text-sm text-slate-500">
-                {connected ? "Connected — नए bills अपने-आप हर 4 सेकंड में check होंगे।" : "PIN डालकर connect करें, फिर Redis का pending bill अपने-आप आएगा।"}
+                {connected ? "Connected — नए bills अपने-आप हर 15 सेकंड में check होंगे। चाहें तो अभी manually भी check करें।" : "PIN डालकर connect करें। पेज खुलने/refresh होने पर भी Redis check होगा।"}
               </p>
             </div>
             {connected ? (
-              <button type="button" onClick={disconnectAutoImport} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-                Disconnect
-              </button>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <button type="button" onClick={checkRedisNow} disabled={checkingRedis} className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-wait disabled:opacity-60">
+                  {checkingRedis ? "Checking Redis…" : "अभी चेक करें"}
+                </button>
+                <button type="button" onClick={disconnectAutoImport} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                  Disconnect
+                </button>
+              </div>
             ) : (
               <form onSubmit={connectAutoImport} className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
                 <input
@@ -240,6 +257,7 @@ export default function Home() {
                 </button>
               </form>
             )}
+            {lastRedisCheck && <p className="mt-2 text-xs text-slate-400">आखिरी चेक: {lastRedisCheck}</p>}
           </div>
         </section>
 
