@@ -8,7 +8,7 @@ import {
   UNITS,
   type BillItem,
 } from "@/lib/bill";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const inputClass =
   "w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 hover:border-slate-300 focus:border-emerald-600 focus:ring-4 focus:ring-emerald-600/10";
@@ -19,6 +19,10 @@ export default function Home() {
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"success" | "error">("success");
   const [loaded, setLoaded] = useState(false);
+  const [connected, setConnected] = useState(false);
+  const [pin, setPin] = useState("");
+  const [connecting, setConnecting] = useState(false);
+  const lastImportedBill = useRef<string | null>(null);
 
   useEffect(() => {
     try {
@@ -34,6 +38,99 @@ export default function Home() {
     if (!loaded) return;
     localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
   }, [items, loaded]);
+
+
+  const pollPendingBill = useCallback(async () => {
+    try {
+      const response = await fetch("/api/bills/pending", { cache: "no-store" });
+      if (response.status === 401) {
+        setConnected(false);
+        return;
+      }
+      if (!response.ok) {
+        if (response.status === 503) {
+          setMessageType("error");
+          setMessage("Redis configuration जाँचें: Vercel environment variables सेट होने चाहिए।");
+        }
+        return;
+      }
+
+      const data = (await response.json()) as {
+        connected: boolean;
+        bill: { createdAt: string; items: { name: string; quantity: number; unit: string; price: number }[] } | null;
+      };
+      setConnected(true);
+      if (!data.bill || !Array.isArray(data.bill.items)) return;
+      const importedAt = data.bill.createdAt;
+      if (
+        lastImportedBill.current === importedAt ||
+        localStorage.getItem("shop-bill-last-imported-at") === importedAt
+      ) {
+        lastImportedBill.current = importedAt;
+        return;
+      }
+
+      const importedItems: BillItem[] = data.bill.items.map((item) => ({
+        id: crypto.randomUUID(),
+        name: item.name,
+        quantity: String(item.quantity),
+        unit: normalizeUnit(item.unit),
+        price: String(item.price),
+      }));
+      lastImportedBill.current = importedAt;
+      localStorage.setItem("shop-bill-last-imported-at", importedAt);
+      setItems(importedItems);
+      setMessageType("success");
+      setMessage(`Redis से ${importedItems.length} सामान वाला बिल इम्पोर्ट हो गया।`);
+    } catch {
+      // Keep the bill editor usable if the network is temporarily unavailable.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (loaded) void pollPendingBill();
+  }, [loaded, pollPendingBill]);
+
+  useEffect(() => {
+    if (!connected) return;
+    void pollPendingBill();
+    const interval = window.setInterval(() => void pollPendingBill(), 4000);
+    return () => window.clearInterval(interval);
+  }, [connected, pollPendingBill]);
+
+  async function connectAutoImport(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setConnecting(true);
+    try {
+      const response = await fetch("/api/auth/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pin }),
+      });
+      const data = (await response.json()) as { error?: string };
+      if (!response.ok) {
+        setMessageType("error");
+        setMessage(data.error || "Website connect नहीं हो पाई।");
+        return;
+      }
+      setPin("");
+      setConnected(true);
+      setMessageType("success");
+      setMessage("Website connect हो गई। Redis से bill अपने-आप check होगा।");
+    } catch {
+      setMessageType("error");
+      setMessage("Connect नहीं हो पाया। Internet connection जाँचें।");
+    } finally {
+      setConnecting(false);
+    }
+  }
+
+  async function disconnectAutoImport() {
+    await fetch("/api/auth/disconnect", { method: "POST" });
+    setConnected(false);
+    setMessageType("success");
+    setMessage("Auto Import disconnect हो गया।");
+  }
 
   const total = billGrandTotal(items);
 
@@ -113,6 +210,38 @@ export default function Home() {
             <p className="mt-1 text-2xl font-bold">{items.length} <span className="text-sm font-medium text-slate-500">आइटम</span></p>
           </div>
         </header>
+
+        <section className="rounded-2xl border border-emerald-100 bg-white p-4 shadow-sm sm:p-5">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="font-bold">Redis Auto Import</h2>
+              <p className="mt-1 text-sm text-slate-500">
+                {connected ? "Connected — नए bills अपने-आप हर 4 सेकंड में check होंगे।" : "PIN डालकर connect करें, फिर Redis का pending bill अपने-आप आएगा।"}
+              </p>
+            </div>
+            {connected ? (
+              <button type="button" onClick={disconnectAutoImport} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                Disconnect
+              </button>
+            ) : (
+              <form onSubmit={connectAutoImport} className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+                <input
+                  type="password"
+                  value={pin}
+                  onChange={(event) => setPin(event.target.value)}
+                  placeholder="Connection PIN"
+                  aria-label="Auto Import connection PIN"
+                  autoComplete="current-password"
+                  required
+                  className={`${inputClass} sm:w-52`}
+                />
+                <button type="submit" disabled={connecting} className="rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
+                  {connecting ? "Connecting…" : "Connect Auto Import"}
+                </button>
+              </form>
+            )}
+          </div>
+        </section>
 
         <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
           <div className="mb-4">
