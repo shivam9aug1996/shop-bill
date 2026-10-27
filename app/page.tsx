@@ -179,7 +179,7 @@ export default function Home() {
     const lines = items
       .filter((item) => item.name.trim())
       .map((item, index) => `${index + 1}. ${item.name} — ${item.quantity} ${item.unit} — ₹${Number(item.price) || 0}`);
-    return `🧾 दुकान का बिल\\n\\n${lines.join("\\n")}\\n\\nकुल बिल: ₹${total.toLocaleString("en-IN")}`;
+    return `🧾 दुकान का बिल\n\n${lines.join("\n")}\n\nकुल बिल: ₹${total.toLocaleString("en-IN")}`;
   }
 
   async function copyBill() {
