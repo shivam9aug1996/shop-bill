@@ -23,7 +23,6 @@ export default function Home() {
   const [pin, setPin] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [checkingRedis, setCheckingRedis] = useState(false);
-  const [lastRedisCheck, setLastRedisCheck] = useState<string | null>(null);
   const lastImportedBill = useRef<string | null>(null);
 
   useEffect(() => {
@@ -89,23 +88,11 @@ export default function Home() {
     }
   }, []);
 
-  useEffect(() => {
-    if (loaded) void pollPendingBill();
-  }, [loaded, pollPendingBill]);
-
-  useEffect(() => {
-    if (!connected) return;
-    void pollPendingBill();
-    const interval = window.setInterval(() => void pollPendingBill(), 15000);
-    return () => window.clearInterval(interval);
-  }, [connected, pollPendingBill]);
-
   async function checkRedisNow() {
     setCheckingRedis(true);
     try {
       await pollPendingBill();
     } finally {
-      setLastRedisCheck(new Date().toLocaleTimeString("en-IN"));
       setCheckingRedis(false);
     }
   }
@@ -128,7 +115,7 @@ export default function Home() {
       setPin("");
       setConnected(true);
       setMessageType("success");
-      setMessage("Website connect हो गई। Redis से bill अपने-आप check होगा।");
+      setMessage("Website connect हो गई। Bill import करने के लिए “अभी चेक करें” दबाएँ।");
     } catch {
       setMessageType("error");
       setMessage("Connect नहीं हो पाया। Internet connection जाँचें।");
@@ -226,9 +213,9 @@ export default function Home() {
         <section className="rounded-2xl border border-emerald-100 bg-white p-4 shadow-sm sm:p-5">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <h2 className="font-bold">Redis Auto Import</h2>
+              <h2 className="font-bold">Redis से बिल इम्पोर्ट</h2>
               <p className="mt-1 text-sm text-slate-500">
-                {connected ? "Connected — नए bills अपने-आप हर 15 सेकंड में check होंगे। चाहें तो अभी manually भी check करें।" : "PIN डालकर connect करें। पेज खुलने/refresh होने पर भी Redis check होगा।"}
+                {connected ? "Connected — नए bill import करने के लिए “अभी चेक करें” दबाएँ।" : "PIN डालकर connect करें। उसके बाद bill manually check कर सकते हैं।"}
               </p>
             </div>
             {connected ? (
@@ -247,17 +234,16 @@ export default function Home() {
                   value={pin}
                   onChange={(event) => setPin(event.target.value)}
                   placeholder="Connection PIN"
-                  aria-label="Auto Import connection PIN"
+                  aria-label="Redis connection PIN"
                   autoComplete="current-password"
                   required
                   className={`${inputClass} sm:w-52`}
                 />
                 <button type="submit" disabled={connecting} className="rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
-                  {connecting ? "Connecting…" : "Connect Auto Import"}
+                  {connecting ? "Connecting…" : "Redis से कनेक्ट करें"}
                 </button>
               </form>
             )}
-            {lastRedisCheck && <p className="mt-2 text-xs text-slate-400">आखिरी चेक: {lastRedisCheck}</p>}
           </div>
         </section>
 
