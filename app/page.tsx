@@ -40,6 +40,22 @@ export default function Home() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
   }, [items, loaded]);
 
+  // Restore the connection indicator from the existing HTTP-only session cookie.
+  // This checks authentication only; it does not read or import a pending bill.
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/auth/status", { cache: "no-store" })
+      .then((response) => (response.ok ? response.json() : { connected: false }))
+      .then((data: { connected?: boolean }) => {
+        if (!cancelled) setConnected(data.connected === true);
+      })
+      .catch(() => {
+        if (!cancelled) setConnected(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const pollPendingBill = useCallback(async () => {
     try {
