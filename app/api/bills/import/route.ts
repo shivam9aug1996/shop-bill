@@ -8,7 +8,6 @@ import {
   safeSecretEqual,
 } from "@/lib/auto-import";
 
-export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
   const expectedKey = env("BILL_IMPORT_API_KEY");
