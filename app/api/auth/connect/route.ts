@@ -6,7 +6,6 @@ import {
   SESSION_COOKIE_NAME,
 } from "@/lib/auto-import";
 
-export const runtime = "nodejs";
 
 export async function POST(request: NextRequest) {
   const pin = env("BILL_IMPORT_PIN");
