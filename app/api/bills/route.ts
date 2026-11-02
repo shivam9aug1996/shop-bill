@@ -50,7 +50,8 @@ export async function POST(request: NextRequest) {
     const items = normalizeSavedItems(body.items);
     if (!items) return NextResponse.json({ error: "Please add at least one valid item." }, { status: 400 });
     const db = await getDatabase();
-    const createdAt = new Date().toISOString();
+    const sourceDate = typeof body.sourceCreatedAt === "string" ? new Date(body.sourceCreatedAt) : null;
+    const createdAt = sourceDate && !Number.isNaN(sourceDate.getTime()) ? sourceDate.toISOString() : new Date().toISOString();
     const total = billGrandTotal(items as BillItem[]);
     const document = {
       billNumber: "SB-" + Date.now().toString().slice(-8),
