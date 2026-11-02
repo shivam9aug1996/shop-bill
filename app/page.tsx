@@ -23,6 +23,14 @@ export default function Home() {
   const [pin, setPin] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [checkingRedis, setCheckingRedis] = useState(false);
+  const [history, setHistory] = useState<Array<{ id: string; billNumber: string; createdAt: string; total: number; items: BillItem[] }>>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyFrom, setHistoryFrom] = useState("");
+  const [historyTo, setHistoryTo] = useState("");
+  const [historyQuery, setHistoryQuery] = useState("");
+  const [showHistory, setShowHistory] = useState(false);
+  const [editingBillId, setEditingBillId] = useState<string | null>(null);
+  const [savingBill, setSavingBill] = useState(false);
   const lastImportedBill = useRef<string | null>(null);
 
   useEffect(() => {
@@ -94,11 +102,18 @@ export default function Home() {
         unit: normalizeUnit(item.unit),
         price: String(item.price),
       }));
-      lastImportedBill.current = importedAt;
-      localStorage.setItem("shop-bill-last-imported-at", importedAt);
+      const savedResponse = await fetch("/api/bills", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items: importedItems, source: "ChatGPT", sourceCreatedAt: importedAt }) });
       setItems(importedItems);
-      setMessageType("success");
-      setMessage(`Redis से ${importedItems.length} सामान वाला बिल इम्पोर्ट हो गया।`);
+      if (savedResponse.ok) {
+        lastImportedBill.current = importedAt;
+        localStorage.setItem("shop-bill-last-imported-at", importedAt);
+        setMessageType("success");
+        setMessage(`Redis से ${importedItems.length} सामान वाला बिल इम्पोर्ट और history में सेव हो गया।`);
+      } else {
+        const saveError = await savedResponse.json();
+        setMessageType("error");
+        setMessage(saveError.error || "Bill import हुआ, लेकिन history में save नहीं हो पाया। दोबारा चेक करें।");
+      }
     } catch {
       // Keep the bill editor usable if the network is temporarily unavailable.
     }
@@ -148,6 +163,83 @@ export default function Home() {
   }
 
   const total = billGrandTotal(items);
+
+  async function loadHistory() {
+    setHistoryLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (historyFrom) params.set("from", historyFrom);
+      if (historyTo) params.set("to", historyTo);
+      if (historyQuery.trim()) params.set("q", historyQuery.trim());
+      const response = await fetch(`/api/bills?${params.toString()}`, { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "History load नहीं हुई।");
+      setHistory(data.bills || []);
+    } catch (error) {
+      setMessageType("error");
+      setMessage(error instanceof Error ? error.message : "History load नहीं हुई।");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }
+
+  async function saveCurrentBill() {
+    const validItems = items.filter((item) => item.name.trim());
+    if (!validItems.length) {
+      setMessageType("error");
+      setMessage("सेव करने से पहले बिल में सामान जोड़ें।");
+      return;
+    }
+    setSavingBill(true);
+    try {
+      const response = await fetch(editingBillId ? `/api/bills/${editingBillId}` : "/api/bills", {
+        method: editingBillId ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: validItems, source: "Website" }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "बिल सेव नहीं हुआ।");
+      setEditingBillId(null);
+      setMessageType("success");
+      setMessage(editingBillId ? "पुराना बिल अपडेट हो गया।" : "बिल MongoDB में सेव हो गया।");
+      if (showHistory) await loadHistory();
+    } catch (error) {
+      setMessageType("error");
+      setMessage(error instanceof Error ? error.message : "बिल सेव नहीं हुआ।");
+    } finally {
+      setSavingBill(false);
+    }
+  }
+
+  async function openHistoryBill(id: string) {
+    try {
+      const response = await fetch(`/api/bills/${id}`, { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "बिल नहीं खुला।");
+      setItems(data.items);
+      setEditingBillId(id);
+      setMessageType("success");
+      setMessage(`Bill ${data.billNumber} edit करने के लिए खुल गया।`);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    } catch (error) {
+      setMessageType("error");
+      setMessage(error instanceof Error ? error.message : "बिल नहीं खुला।");
+    }
+  }
+
+  async function deleteHistoryBill(id: string) {
+    if (!confirm("क्या आप यह पुराना बिल हमेशा के लिए delete करना चाहते हैं?")) return;
+    const response = await fetch(`/api/bills/${id}`, { method: "DELETE" });
+    if (response.ok) {
+      setMessageType("success");
+      setMessage("पुराना बिल delete हो गया।");
+      await loadHistory();
+    } else {
+      const data = await response.json();
+      setMessageType("error");
+      setMessage(data.error || "बिल delete नहीं हुआ।");
+    }
+  }
 
   function updateItem(id: string, field: keyof BillItem, value: string) {
     setItems((current) =>
@@ -220,9 +312,12 @@ export default function Home() {
               बिल इम्पोर्ट करें, सामान और कीमत बदलें, फिर कुल जोड़कर WhatsApp पर भेजें।
             </p>
           </div>
-          <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
-            <p className="text-xs font-medium text-slate-500">कुल सामान</p>
-            <p className="mt-1 text-2xl font-bold">{items.length} <span className="text-sm font-medium text-slate-500">आइटम</span></p>
+          <div className="flex items-center gap-3">
+            <button type="button" onClick={() => { setShowHistory((value) => !value); if (!showHistory) void loadHistory(); }} className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">📚 Bill History</button>
+            <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
+              <p className="text-xs font-medium text-slate-500">कुल सामान</p>
+              <p className="mt-1 text-2xl font-bold">{items.length} <span className="text-sm font-medium text-slate-500">आइटम</span></p>
+            </div>
           </div>
         </header>
 
@@ -340,7 +435,11 @@ export default function Home() {
               </div>
               <p className="text-3xl font-bold tracking-tight text-emerald-700 sm:text-4xl">₹{total.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</p>
             </div>
-            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+              <button type="button" onClick={saveCurrentBill} disabled={savingBill} className="flex-1 rounded-xl bg-emerald-700 px-4 py-3 font-semibold text-white disabled:opacity-60">{savingBill ? "सेव हो रहा है…" : editingBillId ? "बदलाव सेव करें" : "बिल सेव करें"}</button>
+              {editingBillId && <button type="button" onClick={() => setEditingBillId(null)} className="rounded-xl border border-slate-200 px-4 py-3 font-semibold text-slate-700">Edit रद्द करें</button>}
+            </div>
+            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
               <button type="button" onClick={copyBill} className="rounded-xl bg-slate-900 px-4 py-3 font-semibold text-white transition hover:bg-slate-700">बिल कॉपी करें</button>
               <button type="button" onClick={shareWhatsApp} className="rounded-xl bg-green-600 px-4 py-3 font-semibold text-white transition hover:bg-green-700">WhatsApp पर भेजें</button>
               <button type="button" onClick={clearBill} className="rounded-xl border border-red-100 bg-white px-4 py-3 font-semibold text-red-600 transition hover:bg-red-50">पूरा बिल साफ़ करें</button>
@@ -348,6 +447,38 @@ export default function Home() {
             <p className="mt-4 text-center text-xs text-slate-400">आपके बदलाव इसी ब्राउज़र में सेव होते हैं।</p>
           </div>
         </section>
+
+        {showHistory && (
+          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div><h2 className="text-xl font-bold">📚 Bill History</h2><p className="mt-1 text-sm text-slate-500">MongoDB में सेव सभी पुराने बिल (एक बार में अधिकतम 200)।</p></div>
+              <button type="button" onClick={loadHistory} disabled={historyLoading} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white">{historyLoading ? "लोड हो रहा है…" : "Refresh"}</button>
+            </div>
+            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-4">
+              <input aria-label="From date" type="date" value={historyFrom} onChange={(e) => setHistoryFrom(e.target.value)} className={inputClass}/>
+              <input aria-label="To date" type="date" value={historyTo} onChange={(e) => setHistoryTo(e.target.value)} className={inputClass}/>
+              <input aria-label="Search bills" value={historyQuery} onChange={(e) => setHistoryQuery(e.target.value)} placeholder="Bill number या सामान खोजें" className={inputClass}/>
+              <button type="button" onClick={loadHistory} className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white">Search</button>
+            </div>
+            <div className="mt-4 overflow-x-auto">
+              <table className="w-full min-w-[620px] text-left text-sm">
+                <thead><tr className="border-b bg-slate-50 text-slate-500"><th className="p-3">Bill No.</th><th className="p-3">Date & Time</th><th className="p-3 text-center">Items</th><th className="p-3 text-right">Total</th><th className="p-3 text-right">Actions</th></tr></thead>
+                <tbody className="divide-y divide-slate-100">
+                  {history.map((bill) => (
+                    <tr key={bill.id}>
+                      <td className="p-3 font-semibold">{bill.billNumber}</td>
+                      <td className="p-3">{new Date(bill.createdAt).toLocaleString("en-IN")}</td>
+                      <td className="p-3 text-center">{bill.items?.length || 0}</td>
+                      <td className="p-3 text-right font-bold">₹{Number(bill.total).toLocaleString("en-IN")}</td>
+                      <td className="p-3"><div className="flex justify-end gap-2"><button type="button" onClick={() => openHistoryBill(bill.id)} className="rounded-lg border px-3 py-1.5 font-medium hover:bg-slate-50">Open / Edit</button><button type="button" onClick={() => deleteHistoryBill(bill.id)} className="rounded-lg border border-red-100 px-3 py-1.5 font-medium text-red-600 hover:bg-red-50">Delete</button></div></td>
+                    </tr>
+                  ))}
+                  {!history.length && <tr><td colSpan={5} className="p-8 text-center text-slate-500">{historyLoading ? "लोड हो रहा है…" : "इस filter में कोई पुराना बिल नहीं मिला।"}</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
       </div>
     </main>
   );

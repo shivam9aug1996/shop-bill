@@ -73,6 +73,11 @@ export function isValidBillItems(value: unknown): value is IncomingBillItem[] {
     );
 }
 
+export function isAuthenticatedCookie(cookie: string | undefined): boolean {
+  const secret = env("BILL_SESSION_SECRET");
+  return Boolean(secret && isValidSession(cookie, secret));
+}
+
 export function safeSecretEqual(provided: string, expected: string): boolean {
   const providedBuffer = Buffer.from(provided);
   const expectedBuffer = Buffer.from(expected);
