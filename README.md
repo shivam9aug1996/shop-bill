@@ -36,3 +36,17 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+
+## Bill history setup
+
+Add these environment variables in Vercel before using permanent bill history:
+
+- `MONGODB_URI`: MongoDB Atlas connection string for a database user with read/write access.
+- `MONGODB_DB_NAME`: optional database name (defaults to `shop_bill`).
+
+The existing `BILL_IMPORT_PIN` is used as the single admin PIN. The existing `BILL_SESSION_SECRET` signs the secure HTTP-only session cookie.
+
+After deployment, connect with the admin PIN, then use **Bill सेव करें** for bills entered on the website. Bills imported from ChatGPT are automatically saved to history when **अभी चेक करें** imports them. History supports date filters, item/bill-number search, opening/editing, and deletion.
+
+Redis remains the temporary handoff layer. MongoDB stores the permanent bill history. Bills already overwritten or expired in Redis are not recoverable automatically.
