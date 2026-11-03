@@ -17,6 +17,11 @@ export default function Home() {
   const [billNumber, setBillNumber] = useState("");
   const [saved, setSaved] = useState(false);
   const [loaded, setLoaded] = useState(false);
+  const [redisConnected, setRedisConnected] = useState(false);
+  const [redisPin, setRedisPin] = useState("");
+  const [redisBusy, setRedisBusy] = useState(false);
+  const [pendingBill, setPendingBill] = useState<{ source: string; createdAt: string; items: { name: string; quantity: number; unit: string; price: number }[] } | null>(null);
+  const [redisMessage, setRedisMessage] = useState("");
 
   useEffect(() => {
     try {
@@ -43,6 +48,55 @@ export default function Home() {
   useEffect(() => {
     if (loaded && !billId) localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
   }, [items, loaded, billId]);
+
+  useEffect(() => {
+    fetch("/api/auth/status", { cache: "no-store" }).then(r => r.json()).then(data => setRedisConnected(Boolean(data.connected))).catch(() => {});
+  }, []);
+
+  async function connectRedis() {
+    setRedisBusy(true); setRedisMessage("");
+    try {
+      const response = await fetch("/api/auth/connect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pin: redisPin }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Connect नहीं हुआ।");
+      setRedisConnected(true); setRedisPin(""); setRedisMessage("Website connect हो गई।");
+    } catch (e) { setRedisMessage(e instanceof Error ? e.message : "Connect नहीं हुआ।"); }
+    finally { setRedisBusy(false); }
+  }
+
+  async function checkPendingBill() {
+    setRedisBusy(true); setRedisMessage("");
+    try {
+      const response = await fetch("/api/bills/pending", { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Redis से bill नहीं मिला।");
+      setPendingBill(data.bill || null);
+      setRedisMessage(data.bill ? "Redis में नया bill मिल गया।" : "अभी Redis में कोई pending bill नहीं है।");
+    } catch (e) { setRedisMessage(e instanceof Error ? e.message : "Redis check नहीं हुआ।"); }
+    finally { setRedisBusy(false); }
+  }
+
+  async function importPendingBill() {
+    if (!pendingBill?.items?.length) return;
+    const imported = pendingBill.items.map((item, index) => ({ id: crypto.randomUUID() + "-" + index, name: item.name, quantity: String(item.quantity), unit: normalizeUnit(item.unit), price: String(item.price) }));
+    setRedisBusy(true); setRedisMessage("");
+    try {
+      const response = await fetch("/api/bills", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items: imported, source: pendingBill.source || "ChatGPT", sourceCreatedAt: pendingBill.createdAt }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Bill MongoDB में save नहीं हुआ।");
+      setItems(imported); setCustomerName(""); setCustomerPhone(""); setBillId(data.id || null); setBillNumber(data.billNumber || ""); setSaved(true);
+      setMessage("Redis bill MongoDB में save हो गया।");
+      setRedisMessage("Bill सफलतापूर्वक import हो गया।");
+      setPendingBill(null);
+    } catch (e) { setRedisMessage(e instanceof Error ? e.message : "Import नहीं हुआ।"); }
+    finally { setRedisBusy(false); }
+  }
+
+  async function disconnectRedis() {
+    setRedisBusy(true);
+    try { await fetch("/api/auth/disconnect", { method: "POST" }); setRedisConnected(false); setPendingBill(null); setRedisMessage("Website disconnect हो गई।"); }
+    finally { setRedisBusy(false); }
+  }
 
   const total = useMemo(() => billGrandTotal(items), [items]);
   const validItems = items.filter((x) => x.name.trim());
@@ -142,6 +196,30 @@ export default function Home() {
             <label className="space-y-1.5 text-sm font-medium text-stone-700">Customer name <input className={input} value={customerName} onChange={(e) => { setCustomerName(e.target.value); setSaved(false); }} placeholder="ग्राहक का नाम (optional)" /></label>
             <label className="space-y-1.5 text-sm font-medium text-stone-700">Mobile number <input className={input} value={customerPhone} onChange={(e) => { setCustomerPhone(e.target.value); setSaved(false); }} placeholder="मोबाइल नंबर (optional)" inputMode="numeric" /></label>
           </div>
+        </section>
+
+        <section className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-stone-200/70 sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div><h2 className="text-lg font-bold">Redis से बिल इम्पोर्ट</h2><p className="mt-1 text-sm text-stone-500">ChatGPT से भेजा गया pending bill manually check करके सेव करें।</p></div>
+            <span className={redisConnected ? "rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800" : "rounded-full bg-stone-100 px-3 py-1 text-xs font-semibold text-stone-600"}>{redisConnected ? "Connected" : "Not connected"}</span>
+          </div>
+          {!redisConnected ? (
+            <form onSubmit={(e) => { e.preventDefault(); connectRedis(); }} className="mt-4 flex flex-col gap-2 sm:flex-row">
+              <input className={input + " sm:max-w-xs"} type="password" value={redisPin} onChange={e => setRedisPin(e.target.value)} placeholder="Bill PIN डालें" required />
+              <button disabled={redisBusy || !redisPin} className="rounded-xl bg-emerald-800 px-5 py-3 text-sm font-semibold text-white disabled:opacity-50">{redisBusy ? "कृपया प्रतीक्षा करें…" : "Connect करें"}</button>
+            </form>
+          ) : (
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button onClick={checkPendingBill} disabled={redisBusy} className="rounded-xl bg-emerald-800 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">{redisBusy ? "चेक हो रहा है…" : "अभी चेक करें"}</button>
+              <button onClick={disconnectRedis} disabled={redisBusy} className="rounded-xl border border-stone-200 px-4 py-3 text-sm font-semibold">Disconnect</button>
+            </div>
+          )}
+          {redisMessage && <p role="status" className="mt-3 text-sm text-stone-600">{redisMessage}</p>}
+          {pendingBill && <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50/60 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2"><p className="font-semibold text-stone-800">Pending bill · {pendingBill.source}</p><p className="text-xs text-stone-500">{pendingBill.createdAt ? new Date(pendingBill.createdAt).toLocaleString("en-IN") : ""}</p></div>
+            <div className="mt-2 space-y-1 text-sm text-stone-600">{pendingBill.items.map((x, i) => <p key={i}>{x.name} — {x.quantity} {x.unit} — {money(Number(x.price) || 0)}</p>)}</div>
+            <button onClick={importPendingBill} disabled={redisBusy} className="mt-4 rounded-xl bg-emerald-800 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">{redisBusy ? "Import हो रहा है…" : "MongoDB में Import और Save करें"}</button>
+          </div>}
         </section>
 
         <section className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-stone-200/70">
