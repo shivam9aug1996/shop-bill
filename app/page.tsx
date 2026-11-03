@@ -1,485 +1,266 @@
 "use client";
 
-import {
-  billGrandTotal,
-  normalizeUnit,
-  parseBill,
-  STORAGE_KEY,
-  UNITS,
-  type BillItem,
-} from "@/lib/bill";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { billGrandTotal, normalizeUnit, STORAGE_KEY, UNITS, type BillItem } from "@/lib/bill";
 
-const inputClass =
-  "w-full rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-900 shadow-sm outline-none transition placeholder:text-slate-400 hover:border-slate-300 focus:border-emerald-600 focus:ring-4 focus:ring-emerald-600/10";
+const input = "w-full rounded-xl border border-stone-200 bg-white px-3.5 py-3 text-sm outline-none transition focus:border-emerald-600 focus:ring-4 focus:ring-emerald-600/10";
+const money = (n: number) => "₹" + n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
 
 export default function Home() {
   const [items, setItems] = useState<BillItem[]>([]);
-  const [pasteText, setPasteText] = useState("");
+  const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
   const [message, setMessage] = useState("");
-  const [messageType, setMessageType] = useState<"success" | "error">("success");
+  const [busy, setBusy] = useState(false);
+  const [billId, setBillId] = useState<string | null>(null);
+  const [billNumber, setBillNumber] = useState("");
+  const [saved, setSaved] = useState(false);
   const [loaded, setLoaded] = useState(false);
-  const [connected, setConnected] = useState(false);
-  const [pin, setPin] = useState("");
-  const [connecting, setConnecting] = useState(false);
-  const [checkingRedis, setCheckingRedis] = useState(false);
-  const [history, setHistory] = useState<Array<{ id: string; billNumber: string; createdAt: string; total: number; items: BillItem[] }>>([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyFrom, setHistoryFrom] = useState("");
-  const [historyTo, setHistoryTo] = useState("");
-  const [historyQuery, setHistoryQuery] = useState("");
-  const [showHistory, setShowHistory] = useState(false);
-  const [editingBillId, setEditingBillId] = useState<string | null>(null);
-  const [savingBill, setSavingBill] = useState(false);
-  const lastImportedBill = useRef<string | null>(null);
+  const [redisConnected, setRedisConnected] = useState(false);
+  const [redisPin, setRedisPin] = useState("");
+  const [redisBusy, setRedisBusy] = useState(false);
+  const [pendingBill, setPendingBill] = useState<{ source: string; createdAt: string; items: { name: string; quantity: number; unit: string; price: number }[] } | null>(null);
+  const [redisMessage, setRedisMessage] = useState("");
 
   useEffect(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) setItems((JSON.parse(saved) as BillItem[]).map((item) => ({ ...item, unit: ({ "किलो": "kg", "किलोग्राम": "kg", "ग्राम": "g", "मिलीग्राम": "mg", "लीटर": "L", "मिलीलीटर": "ml", "पीस": "Piece", "पैकेट": "Packet", "बॉक्स": "Box", "दर्जन": "Dozen" } as Record<string, string>)[item.unit] || item.unit })));
-    } catch {
-      console.error("Could not load saved bill");
-    }
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) setItems((JSON.parse(raw) as BillItem[]).map((x) => ({ ...x, unit: normalizeUnit(x.unit) })));
+      const params = new URLSearchParams(window.location.search);
+      const id = params.get("edit");
+      if (id) {
+        fetch("/api/bills/" + id, { cache: "no-store" }).then(async (r) => {
+          const data = await r.json();
+          if (!r.ok) throw new Error(data.error || "Bill load nahi hua");
+          setItems(data.items || []);
+          setCustomerName(data.customerName || "");
+          setCustomerPhone(data.customerPhone || "");
+          setBillId(id);
+          setBillNumber(data.billNumber || "");
+          setSaved(true);
+        }).catch((e) => setMessage(e.message));
+      }
+    } catch { /* ignore invalid local draft */ }
     setLoaded(true);
   }, []);
 
   useEffect(() => {
-    if (!loaded) return;
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-  }, [items, loaded]);
+    if (loaded && !billId) localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+  }, [items, loaded, billId]);
 
-  // Restore the connection indicator from the existing HTTP-only session cookie.
-  // This checks authentication only; it does not read or import a pending bill.
   useEffect(() => {
-    let cancelled = false;
-    fetch("/api/auth/status", { cache: "no-store" })
-      .then((response) => (response.ok ? response.json() : { connected: false }))
-      .then((data: { connected?: boolean }) => {
-        if (!cancelled) setConnected(data.connected === true);
-      })
-      .catch(() => {
-        if (!cancelled) setConnected(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+    fetch("/api/auth/status", { cache: "no-store" }).then(r => r.json()).then(data => setRedisConnected(Boolean(data.connected))).catch(() => {});
   }, []);
 
-  const pollPendingBill = useCallback(async () => {
+  async function connectRedis() {
+    setRedisBusy(true); setRedisMessage("");
+    try {
+      const response = await fetch("/api/auth/connect", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ pin: redisPin }) });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Connect नहीं हुआ।");
+      setRedisConnected(true); setRedisPin(""); setRedisMessage("Website connect हो गई।");
+    } catch (e) { setRedisMessage(e instanceof Error ? e.message : "Connect नहीं हुआ।"); }
+    finally { setRedisBusy(false); }
+  }
+
+  async function checkPendingBill() {
+    setRedisBusy(true); setRedisMessage("");
     try {
       const response = await fetch("/api/bills/pending", { cache: "no-store" });
-      if (response.status === 401) {
-        setConnected(false);
-        return;
-      }
-      if (!response.ok) {
-        if (response.status === 503) {
-          setMessageType("error");
-          setMessage("Redis configuration जाँचें: Vercel environment variables सेट होने चाहिए।");
-        }
-        return;
-      }
-
-      const data = (await response.json()) as {
-        connected: boolean;
-        bill: { createdAt: string; items: { name: string; quantity: number; unit: string; price: number }[] } | null;
-      };
-      setConnected(true);
-      if (!data.bill || !Array.isArray(data.bill.items)) return;
-      const importedAt = data.bill.createdAt;
-      if (
-        lastImportedBill.current === importedAt ||
-        localStorage.getItem("shop-bill-last-imported-at") === importedAt
-      ) {
-        lastImportedBill.current = importedAt;
-        return;
-      }
-
-      const importedItems: BillItem[] = data.bill.items.map((item) => ({
-        id: crypto.randomUUID(),
-        name: item.name,
-        quantity: String(item.quantity),
-        unit: normalizeUnit(item.unit),
-        price: String(item.price),
-      }));
-      const savedResponse = await fetch("/api/bills", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items: importedItems, source: "ChatGPT", sourceCreatedAt: importedAt }) });
-      setItems(importedItems);
-      if (savedResponse.ok) {
-        lastImportedBill.current = importedAt;
-        localStorage.setItem("shop-bill-last-imported-at", importedAt);
-        setMessageType("success");
-        setMessage(`Redis से ${importedItems.length} सामान वाला बिल इम्पोर्ट और history में सेव हो गया।`);
-      } else {
-        const saveError = await savedResponse.json();
-        setMessageType("error");
-        setMessage(saveError.error || "Bill import हुआ, लेकिन history में save नहीं हो पाया। दोबारा चेक करें।");
-      }
-    } catch {
-      // Keep the bill editor usable if the network is temporarily unavailable.
-    }
-  }, []);
-
-  async function checkRedisNow() {
-    setCheckingRedis(true);
-    try {
-      await pollPendingBill();
-    } finally {
-      setCheckingRedis(false);
-    }
-  }
-
-  async function connectAutoImport(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setConnecting(true);
-    try {
-      const response = await fetch("/api/auth/connect", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pin }),
-      });
-      const data = (await response.json()) as { error?: string };
-      if (!response.ok) {
-        setMessageType("error");
-        setMessage(data.error || "Website connect नहीं हो पाई।");
-        return;
-      }
-      setPin("");
-      setConnected(true);
-      setMessageType("success");
-      setMessage("Website connect हो गई। Bill import करने के लिए “अभी चेक करें” दबाएँ।");
-    } catch {
-      setMessageType("error");
-      setMessage("Connect नहीं हो पाया। Internet connection जाँचें।");
-    } finally {
-      setConnecting(false);
-    }
-  }
-
-  async function disconnectAutoImport() {
-    await fetch("/api/auth/disconnect", { method: "POST" });
-    setConnected(false);
-    setMessageType("success");
-    setMessage("Auto Import disconnect हो गया।");
-  }
-
-  const total = billGrandTotal(items);
-
-  async function loadHistory() {
-    setHistoryLoading(true);
-    try {
-      const params = new URLSearchParams();
-      if (historyFrom) params.set("from", historyFrom);
-      if (historyTo) params.set("to", historyTo);
-      if (historyQuery.trim()) params.set("q", historyQuery.trim());
-      const response = await fetch(`/api/bills?${params.toString()}`, { cache: "no-store" });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "History load नहीं हुई।");
-      setHistory(data.bills || []);
-    } catch (error) {
-      setMessageType("error");
-      setMessage(error instanceof Error ? error.message : "History load नहीं हुई।");
-    } finally {
-      setHistoryLoading(false);
-    }
+      if (!response.ok) throw new Error(data.error || "Redis से bill नहीं मिला।");
+      setPendingBill(data.bill || null);
+      setRedisMessage(data.bill ? "Redis में नया bill मिल गया।" : "अभी Redis में कोई pending bill नहीं है।");
+    } catch (e) { setRedisMessage(e instanceof Error ? e.message : "Redis check नहीं हुआ।"); }
+    finally { setRedisBusy(false); }
   }
 
-  async function saveCurrentBill() {
-    const validItems = items.filter((item) => item.name.trim());
-    if (!validItems.length) {
-      setMessageType("error");
-      setMessage("सेव करने से पहले बिल में सामान जोड़ें।");
-      return;
-    }
-    setSavingBill(true);
+  async function importPendingBill() {
+    if (!pendingBill?.items?.length) return;
+    const imported = pendingBill.items.map((item, index) => ({ id: crypto.randomUUID() + "-" + index, name: item.name, quantity: String(item.quantity), unit: normalizeUnit(item.unit), price: String(item.price) }));
+    setRedisBusy(true); setRedisMessage("");
     try {
-      const response = await fetch(editingBillId ? `/api/bills/${editingBillId}` : "/api/bills", {
-        method: editingBillId ? "PATCH" : "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: validItems, source: "Website" }),
-      });
+      const response = await fetch("/api/bills", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ items: imported, source: pendingBill.source || "ChatGPT", sourceCreatedAt: pendingBill.createdAt }) });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "बिल सेव नहीं हुआ।");
-      setEditingBillId(null);
-      setMessageType("success");
-      setMessage(editingBillId ? "पुराना बिल अपडेट हो गया।" : "बिल MongoDB में सेव हो गया।");
-      if (showHistory) await loadHistory();
-    } catch (error) {
-      setMessageType("error");
-      setMessage(error instanceof Error ? error.message : "बिल सेव नहीं हुआ।");
-    } finally {
-      setSavingBill(false);
-    }
+      if (!response.ok) throw new Error(data.error || "Bill MongoDB में save नहीं हुआ।");
+      setItems(imported); setCustomerName(""); setCustomerPhone(""); setBillId(data.id || null); setBillNumber(data.billNumber || ""); setSaved(true);
+      setMessage("Redis bill MongoDB में save हो गया।");
+      setRedisMessage("Bill सफलतापूर्वक import हो गया।");
+      setPendingBill(null);
+    } catch (e) { setRedisMessage(e instanceof Error ? e.message : "Import नहीं हुआ।"); }
+    finally { setRedisBusy(false); }
   }
 
-  async function openHistoryBill(id: string) {
-    try {
-      const response = await fetch(`/api/bills/${id}`, { cache: "no-store" });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "बिल नहीं खुला।");
-      setItems(data.items);
-      setEditingBillId(id);
-      setMessageType("success");
-      setMessage(`Bill ${data.billNumber} edit करने के लिए खुल गया।`);
-      window.scrollTo({ top: 0, behavior: "smooth" });
-    } catch (error) {
-      setMessageType("error");
-      setMessage(error instanceof Error ? error.message : "बिल नहीं खुला।");
-    }
+  async function disconnectRedis() {
+    setRedisBusy(true);
+    try { await fetch("/api/auth/disconnect", { method: "POST" }); setRedisConnected(false); setPendingBill(null); setRedisMessage("Website disconnect हो गई।"); }
+    finally { setRedisBusy(false); }
   }
 
-  async function deleteHistoryBill(id: string) {
-    if (!confirm("क्या आप यह पुराना बिल हमेशा के लिए delete करना चाहते हैं?")) return;
-    const response = await fetch(`/api/bills/${id}`, { method: "DELETE" });
-    if (response.ok) {
-      setMessageType("success");
-      setMessage("पुराना बिल delete हो गया।");
-      await loadHistory();
-    } else {
-      const data = await response.json();
-      setMessageType("error");
-      setMessage(data.error || "बिल delete नहीं हुआ।");
-    }
-  }
+  const total = useMemo(() => billGrandTotal(items), [items]);
+  const validItems = items.filter((x) => x.name.trim());
 
-  function updateItem(id: string, field: keyof BillItem, value: string) {
-    setItems((current) =>
-      current.map((item) => (item.id === id ? { ...item, [field]: value } : item))
-    );
+  function update(id: string, field: keyof BillItem, value: string) {
+    setItems((old) => old.map((x) => x.id === id ? { ...x, [field]: value } : x));
+    setSaved(false);
   }
-
   function addItem() {
-    setItems((current) => [
-      ...current,
-      { id: crypto.randomUUID(), name: "", quantity: "1", unit: "Piece", price: "0" },
-    ]);
+    setItems((old) => [...old, { id: crypto.randomUUID(), name: "", quantity: "1", unit: "kg", price: "0" }]);
+    setSaved(false);
+  }
+  function removeItem(id: string) { setItems((old) => old.filter((x) => x.id !== id)); setSaved(false); }
+
+  function receiptText() {
+    const rows = validItems.map((x, i) => `${i + 1}. ${x.name} — ${x.quantity} ${x.unit} — ${money(Number(x.price) || 0)}`);
+    return [
+      "RAMNATH PANSARI", "Pankaj Garg | 9634396572", "--------------------------------",
+      billNumber ? "Bill: " + billNumber : "Bill: " + new Date().toLocaleDateString("en-IN"),
+      customerName ? "Customer: " + customerName : "",
+      customerPhone ? "Phone: " + customerPhone : "",
+      "--------------------------------", ...rows, "--------------------------------",
+      "TOTAL: " + money(total), "धन्यवाद! फिर आइए।"
+    ].filter(Boolean).join("\n");
   }
 
-  function importBill() {
-    const parsed = parseBill(pasteText);
-    if (!parsed.length) {
-      setMessageType("error");
-      setMessage("बिल समझ नहीं आया। ChatGPT की पूरी टेबल कॉपी करके दोबारा कोशिश करें।");
-      return;
-    }
-    setItems(parsed);
-    setPasteText("");
-    setMessageType("success");
-    setMessage(`${parsed.length} सामान सफलतापूर्वक इम्पोर्ट हो गया।`);
-  }
-
-  function getBillText() {
-    const lines = items
-      .filter((item) => item.name.trim())
-      .map((item, index) => `${index + 1}. ${item.name} — ${item.quantity} ${item.unit} — ₹${Number(item.price) || 0}`);
-    return `🧾 दुकान का बिल\n\n${lines.join("\n")}\n\nकुल बिल: ₹${total.toLocaleString("en-IN")}`;
-  }
-
-  async function copyBill() {
+  async function saveBill() {
+    if (!validItems.length) { setMessage("पहले बिल में सामान जोड़ें।"); return; }
+    setBusy(true);
     try {
-      await navigator.clipboard.writeText(getBillText());
-      setMessageType("success");
-      setMessage("बिल कॉपी हो गया। अब इसे WhatsApp पर पेस्ट कर सकते हैं।");
-    } catch {
-      setMessageType("error");
-      setMessage("कॉपी नहीं हुआ। ब्राउज़र की clipboard permission जाँचें।");
-    }
+      const response = await fetch(billId ? "/api/bills/" + billId : "/api/bills", {
+        method: billId ? "PATCH" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: validItems, customerName, customerPhone, source: "Website" }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "बिल सेव नहीं हुआ");
+      if (!billId && data.id) setBillId(data.id);
+      if (data.billNumber) setBillNumber(data.billNumber);
+      setSaved(true);
+      setMessage("बिल सुरक्षित हो गया।");
+    } catch (e) { setMessage(e instanceof Error ? e.message : "बिल सेव नहीं हुआ।"); }
+    finally { setBusy(false); }
   }
 
   function shareWhatsApp() {
-    window.open(`https://wa.me/?text=${encodeURIComponent(getBillText())}`, "_blank", "noopener,noreferrer");
+    window.open("https://wa.me/?text=" + encodeURIComponent(receiptText()), "_blank", "noopener,noreferrer");
   }
 
-  function clearBill() {
-    if (confirm("क्या आप पूरा बिल साफ़ करना चाहते हैं?")) {
-      setItems([]);
-      setMessageType("success");
-      setMessage("बिल साफ़ हो गया।");
-    }
+  function printBill() { window.print(); }
+
+  async function generateImage() {
+    if (!validItems.length) { setMessage("पहले सामान जोड़ें।"); return; }
+    const lines = receiptText().split("\n");
+    const canvas = document.createElement("canvas");
+    const width = 900, lineHeight = 42, padding = 54;
+    canvas.width = width;
+    canvas.height = padding * 2 + lines.length * lineHeight + 30;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) { setMessage("Image generate नहीं हो पाई।"); return; }
+    ctx.fillStyle = "#fffdf7"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#14532d"; ctx.font = "bold 36px Arial"; ctx.textAlign = "center";
+    ctx.fillText("RAMNATH PANSARI", width / 2, padding + 18);
+    ctx.fillStyle = "#57534e"; ctx.font = "20px Arial";
+    ctx.fillText("Pankaj Garg  •  9634396572", width / 2, padding + 52);
+    ctx.textAlign = "left";
+    lines.forEach((line, i) => {
+      ctx.fillStyle = line.startsWith("TOTAL:") ? "#166534" : "#292524";
+      ctx.font = line.startsWith("TOTAL:") ? "bold 30px Arial" : "22px Arial";
+      ctx.fillText(line, padding, padding + 112 + i * lineHeight, width - padding * 2);
+    });
+    const a = document.createElement("a");
+    a.download = (billNumber || "ramnath-pansari-bill") + ".png";
+    a.href = canvas.toDataURL("image/png");
+    a.click();
+    setMessage("बिल की image तैयार है।");
   }
 
-  if (!loaded) return <main className="grid min-h-screen place-items-center bg-slate-50 text-slate-500">बिल लोड हो रहा है…</main>;
+  if (!loaded) return <main className="min-h-screen grid place-items-center bg-stone-50 text-stone-500">बिल लोड हो रहा है…</main>;
 
   return (
-    <main className="min-h-screen bg-slate-50 px-3 py-6 text-slate-900 sm:px-6 sm:py-10">
-      <div className="mx-auto max-w-6xl space-y-6">
-        <header className="flex flex-col gap-4 border-b border-slate-200 pb-6 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">
-              <span className="h-2 w-2 rounded-full bg-emerald-600" /> दुकान का हिसाब
-            </div>
-            <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Shop Billing</h1>
-            <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500">
-              बिल इम्पोर्ट करें, सामान और कीमत बदलें, फिर कुल जोड़कर WhatsApp पर भेजें।
-            </p>
+    <main className="min-h-screen bg-[#f7f8f5] px-3 py-5 text-stone-900 sm:px-6 sm:py-9">
+      <div className="mx-auto max-w-5xl space-y-5">
+        <header className="flex flex-wrap items-center justify-between gap-4 rounded-2xl bg-white p-5 shadow-sm ring-1 ring-stone-200/70 sm:p-7">
+          <div className="flex items-center gap-4">
+            <div className="grid h-14 w-14 place-items-center rounded-2xl bg-emerald-800 text-2xl text-white">🌿</div>
+            <div><p className="text-xs font-semibold uppercase tracking-[.18em] text-emerald-800">Shop billing</p><h1 className="text-2xl font-bold sm:text-3xl">Ramnath Pansari</h1><p className="mt-1 text-sm text-stone-500">Pankaj Garg · 9634396572</p></div>
           </div>
-          <div className="flex items-center gap-3">
-            <button type="button" onClick={() => { setShowHistory((value) => !value); if (!showHistory) void loadHistory(); }} className="rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50">📚 Bill History</button>
-            <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-sm">
-              <p className="text-xs font-medium text-slate-500">कुल सामान</p>
-              <p className="mt-1 text-2xl font-bold">{items.length} <span className="text-sm font-medium text-slate-500">आइटम</span></p>
-            </div>
-          </div>
+          <Link href="/history" className="rounded-xl border border-stone-200 px-4 py-3 text-sm font-semibold hover:bg-stone-50">📚 पुराने बिल</Link>
         </header>
 
-        <section className="rounded-2xl border border-emerald-100 bg-white p-4 shadow-sm sm:p-5">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="font-bold">Redis से बिल इम्पोर्ट</h2>
-              <p className="mt-1 text-sm text-slate-500">
-                {connected ? "Connected — नए bill import करने के लिए “अभी चेक करें” दबाएँ।" : "PIN डालकर connect करें। उसके बाद bill manually check कर सकते हैं।"}
-              </p>
-            </div>
-            {connected ? (
-              <div className="flex flex-col gap-2 sm:flex-row">
-                <button type="button" onClick={checkRedisNow} disabled={checkingRedis} className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-wait disabled:opacity-60">
-                  {checkingRedis ? "Checking Redis…" : "अभी चेक करें"}
-                </button>
-                <button type="button" onClick={disconnectAutoImport} className="rounded-xl border border-slate-200 px-4 py-2.5 text-sm font-semibold text-slate-700 hover:bg-slate-50">
-                  Disconnect
-                </button>
-              </div>
-            ) : (
-              <form onSubmit={connectAutoImport} className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
-                <input
-                  type="password"
-                  value={pin}
-                  onChange={(event) => setPin(event.target.value)}
-                  placeholder="Connection PIN"
-                  aria-label="Redis connection PIN"
-                  autoComplete="current-password"
-                  required
-                  className={`${inputClass} sm:w-52`}
-                />
-                <button type="submit" disabled={connecting} className="rounded-xl bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60">
-                  {connecting ? "Connecting…" : "Redis से कनेक्ट करें"}
-                </button>
-              </form>
-            )}
+        {message && <div role="status" className="rounded-xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">{message}</div>}
+
+        <section className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-stone-200/70 sm:p-7">
+          <div className="mb-5"><h2 className="text-lg font-bold">ग्राहक की जानकारी</h2><p className="mt-1 text-sm text-stone-500">ग्राहक का नाम लिखें ताकि बिल पर दिखाई दे।</p></div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="space-y-1.5 text-sm font-medium text-stone-700">Customer name <input className={input} value={customerName} onChange={(e) => { setCustomerName(e.target.value); setSaved(false); }} placeholder="ग्राहक का नाम (optional)" /></label>
+            <label className="space-y-1.5 text-sm font-medium text-stone-700">Mobile number <input className={input} value={customerPhone} onChange={(e) => { setCustomerPhone(e.target.value); setSaved(false); }} placeholder="मोबाइल नंबर (optional)" inputMode="numeric" /></label>
           </div>
         </section>
 
-        <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-          <div className="mb-4">
-            <h2 className="text-lg font-bold">ChatGPT से बिल इम्पोर्ट करें</h2>
-            <p className="mt-1 text-sm text-slate-500">बिल की टेबल कॉपी करके नीचे पेस्ट करें।</p>
+        <section className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-stone-200/70 sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div><h2 className="text-lg font-bold">Redis से बिल इम्पोर्ट</h2><p className="mt-1 text-sm text-stone-500">ChatGPT से भेजा गया pending bill manually check करके सेव करें।</p></div>
+            <span className={redisConnected ? "rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800" : "rounded-full bg-stone-100 px-3 py-1 text-xs font-semibold text-stone-600"}>{redisConnected ? "Connected" : "Not connected"}</span>
           </div>
-          <textarea
-            value={pasteText}
-            onChange={(event) => setPasteText(event.target.value)}
-            placeholder="यहाँ पूरा बिल पेस्ट करें…"
-            className={`${inputClass} min-h-36 resize-y leading-6`}
-          />
-          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-            <button type="button" onClick={importBill} className="rounded-xl bg-emerald-700 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800 focus:outline-none focus:ring-4 focus:ring-emerald-700/20">
-              बिल इम्पोर्ट करें
-            </button>
-            <button type="button" onClick={() => { setPasteText(""); setMessage(""); }} className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
-              टेक्स्ट साफ़ करें
-            </button>
-          </div>
-          {message && (
-            <p aria-live="polite" className={`mt-4 rounded-xl px-4 py-3 text-sm font-medium ${messageType === "error" ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-800"}`}>
-              {message}
-            </p>
+          {!redisConnected ? (
+            <form onSubmit={(e) => { e.preventDefault(); connectRedis(); }} className="mt-4 flex flex-col gap-2 sm:flex-row">
+              <input className={input + " sm:max-w-xs"} type="password" value={redisPin} onChange={e => setRedisPin(e.target.value)} placeholder="Bill PIN डालें" required />
+              <button disabled={redisBusy || !redisPin} className="rounded-xl bg-emerald-800 px-5 py-3 text-sm font-semibold text-white disabled:opacity-50">{redisBusy ? "कृपया प्रतीक्षा करें…" : "Connect करें"}</button>
+            </form>
+          ) : (
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button onClick={checkPendingBill} disabled={redisBusy} className="rounded-xl bg-emerald-800 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">{redisBusy ? "चेक हो रहा है…" : "अभी चेक करें"}</button>
+              <button onClick={disconnectRedis} disabled={redisBusy} className="rounded-xl border border-stone-200 px-4 py-3 text-sm font-semibold">Disconnect</button>
+            </div>
           )}
+          {redisMessage && <p role="status" className="mt-3 text-sm text-stone-600">{redisMessage}</p>}
+          {pendingBill && <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50/60 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2"><p className="font-semibold text-stone-800">Pending bill · {pendingBill.source}</p><p className="text-xs text-stone-500">{pendingBill.createdAt ? new Date(pendingBill.createdAt).toLocaleString("en-IN") : ""}</p></div>
+            <div className="mt-2 space-y-1 text-sm text-stone-600">{pendingBill.items.map((x, i) => <p key={i}>{x.name} — {x.quantity} {x.unit} — {money(Number(x.price) || 0)}</p>)}</div>
+            <button onClick={importPendingBill} disabled={redisBusy} className="mt-4 rounded-xl bg-emerald-800 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">{redisBusy ? "Import हो रहा है…" : "MongoDB में Import और Save करें"}</button>
+          </div>}
         </section>
 
-        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="flex flex-col gap-3 border-b border-slate-100 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
-            <div>
-              <h2 className="text-xl font-bold">बिल के सामान</h2>
-              <p className="mt-1 text-sm text-slate-500">हर पंक्ति में कीमत उस सामान की पूरी रकम है।</p>
-            </div>
-            <button type="button" onClick={addItem} className="inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-700">
-              <span className="text-lg leading-none">+</span> सामान जोड़ें
-            </button>
+        <section className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-stone-200/70">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-stone-100 p-5 sm:p-7">
+            <div><h2 className="text-xl font-bold">बिल के सामान</h2><p className="mt-1 text-sm text-stone-500">मात्रा और सामान की कुल रकम भरें।</p></div>
+            <button onClick={addItem} className="rounded-xl bg-emerald-800 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-900">＋ सामान जोड़ें</button>
           </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[700px] border-collapse text-left">
-              <thead>
-                <tr className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  <th className="w-12 px-4 py-3">#</th>
-                  <th className="px-3 py-3">सामान का नाम</th>
-                  <th className="w-32 px-3 py-3">मात्रा</th>
-                  <th className="w-36 px-3 py-3">Unit</th>
-                  <th className="w-40 px-3 py-3 text-right">रकम (₹)</th>
-                  <th className="w-20 px-4 py-3 text-center">हटाएँ</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {items.map((item, index) => (
-                  <tr key={item.id} className="transition-colors hover:bg-slate-50/70">
-                    <td className="px-4 py-3 text-sm font-medium text-slate-400">{index + 1}</td>
-                    <td className="px-3 py-3"><input value={item.name} onChange={(event) => updateItem(item.id, "name", event.target.value)} placeholder="जैसे चीनी" aria-label={`सामान ${index + 1} का नाम`} className={inputClass} /></td>
-                    <td className="px-3 py-3"><input type="number" min="0" step="any" value={item.quantity} onChange={(event) => updateItem(item.id, "quantity", event.target.value)} aria-label={`सामान ${index + 1} की मात्रा`} className={inputClass} /></td>
-                    <td className="px-3 py-3">
-                      <select value={item.unit} onChange={(event) => updateItem(item.id, "unit", event.target.value)} aria-label={`Item ${index + 1} unit`} className={`${inputClass} cursor-pointer`}>
-                        {UNITS.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
-                      </select>
-                    </td>
-                    <td className="px-3 py-3"><div className="relative"><span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">₹</span><input type="number" min="0" step="0.01" value={item.price} onChange={(event) => updateItem(item.id, "price", event.target.value)} aria-label={`सामान ${index + 1} की रकम`} className={`${inputClass} pl-7 text-right font-semibold tabular-nums`} /></div></td>
-                    <td className="px-4 py-3 text-center"><button type="button" onClick={() => setItems((current) => current.filter((row) => row.id !== item.id))} className="inline-flex h-10 w-10 items-center justify-center rounded-xl text-lg text-slate-400 transition hover:bg-red-50 hover:text-red-600 focus:outline-none focus:ring-4 focus:ring-red-100" aria-label={`${item.name || "सामान"} हटाएँ`}>×</button></td>
-                  </tr>
-                ))}
-                {items.length === 0 && <tr><td colSpan={6} className="px-6 py-14 text-center"><div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-2xl bg-slate-100 text-2xl">🧾</div><p className="font-semibold text-slate-700">अभी कोई सामान नहीं है</p><p className="mt-1 text-sm text-slate-500">ऊपर बिल पेस्ट करें या “सामान जोड़ें” दबाएँ।</p></td></tr>}
-              </tbody>
-            </table>
+          <div className="space-y-3 p-4 sm:p-6">
+            {items.map((item, index) => <div key={item.id} className="grid gap-2 rounded-xl border border-stone-100 bg-stone-50/70 p-3 sm:grid-cols-[minmax(0,2fr)_110px_125px_145px_40px] sm:items-end sm:bg-white sm:p-2">
+              <label className="text-xs font-medium text-stone-500">सामान का नाम<input className={input} value={item.name} onChange={(e) => update(item.id, "name", e.target.value)} placeholder="जैसे आटा" /></label>
+              <label className="text-xs font-medium text-stone-500">मात्रा<input className={input} type="number" min="0" step="any" value={item.quantity} onChange={(e) => update(item.id, "quantity", e.target.value)} /></label>
+              <label className="text-xs font-medium text-stone-500">Unit<select className={input} value={item.unit} onChange={(e) => update(item.id, "unit", e.target.value)}>{UNITS.map((u) => <option key={u}>{u}</option>)}</select></label>
+              <label className="text-xs font-medium text-stone-500">रकम (₹)<input className={input + " text-right font-semibold"} type="number" min="0" step="0.01" value={item.price} onChange={(e) => update(item.id, "price", e.target.value)} /></label>
+              <button onClick={() => removeItem(item.id)} aria-label={"Remove item " + (index + 1)} className="h-10 rounded-lg text-xl text-stone-400 hover:bg-red-50 hover:text-red-600">×</button>
+            </div>)}
+            {!items.length && <div className="rounded-xl border border-dashed border-stone-300 px-5 py-12 text-center"><div className="text-3xl">🧾</div><p className="mt-3 font-semibold">आपका बिल अभी खाली है</p><p className="mt-1 text-sm text-stone-500">शुरू करने के लिए “सामान जोड़ें” पर क्लिक करें।</p></div>}
           </div>
-
-          <div className="border-t border-slate-100 bg-slate-50/70 p-4 sm:p-6">
-            <div className="flex flex-col gap-2 rounded-2xl border border-emerald-100 bg-white p-5 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-sm font-medium text-slate-500">बिल की कुल रकम</p>
-                <p className="mt-1 text-xs text-slate-400">सभी सामान की रकम का जोड़</p>
-              </div>
-              <p className="text-3xl font-bold tracking-tight text-emerald-700 sm:text-4xl">₹{total.toLocaleString("en-IN", { maximumFractionDigits: 2 })}</p>
+          <div className="border-t border-stone-100 bg-stone-50/80 p-5 sm:p-7">
+            <div className="flex items-center justify-between gap-4"><div><p className="text-sm font-medium text-stone-500">कुल बिल रकम</p><p className="mt-1 text-xs text-stone-400">{validItems.length} सामान</p></div><p className="text-3xl font-bold tracking-tight text-emerald-800">{money(total)}</p></div>
+            <div className="mt-5 flex flex-wrap gap-2">
+              <button onClick={saveBill} disabled={busy || !validItems.length} className="rounded-xl bg-emerald-800 px-5 py-3 text-sm font-semibold text-white hover:bg-emerald-900 disabled:opacity-50">{busy ? "सेव हो रहा है…" : saved ? "✓ बिल सेव है" : billId ? "बदलाव सेव करें" : "बिल सेव करें"}</button>
+              <button onClick={generateImage} className="rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm font-semibold hover:bg-stone-50">Image बनाएं</button>
+              <button onClick={printBill} className="rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm font-semibold hover:bg-stone-50">PDF सेव करें</button>
+              <button onClick={printBill} className="rounded-xl border border-stone-200 bg-white px-4 py-3 text-sm font-semibold hover:bg-stone-50">Print</button>
+              <button onClick={shareWhatsApp} className="rounded-xl bg-[#16834b] px-4 py-3 text-sm font-semibold text-white hover:bg-[#116b3d]">WhatsApp पर भेजें</button>
             </div>
-            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-              <button type="button" onClick={saveCurrentBill} disabled={savingBill} className="flex-1 rounded-xl bg-emerald-700 px-4 py-3 font-semibold text-white disabled:opacity-60">{savingBill ? "सेव हो रहा है…" : editingBillId ? "बदलाव सेव करें" : "बिल सेव करें"}</button>
-              {editingBillId && <button type="button" onClick={() => setEditingBillId(null)} className="rounded-xl border border-slate-200 px-4 py-3 font-semibold text-slate-700">Edit रद्द करें</button>}
-            </div>
-            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
-              <button type="button" onClick={copyBill} className="rounded-xl bg-slate-900 px-4 py-3 font-semibold text-white transition hover:bg-slate-700">बिल कॉपी करें</button>
-              <button type="button" onClick={shareWhatsApp} className="rounded-xl bg-green-600 px-4 py-3 font-semibold text-white transition hover:bg-green-700">WhatsApp पर भेजें</button>
-              <button type="button" onClick={clearBill} className="rounded-xl border border-red-100 bg-white px-4 py-3 font-semibold text-red-600 transition hover:bg-red-50">पूरा बिल साफ़ करें</button>
-            </div>
-            <p className="mt-4 text-center text-xs text-slate-400">आपके बदलाव इसी ब्राउज़र में सेव होते हैं।</p>
+            <p className="mt-3 text-xs text-stone-400">PDF सेव करें या Print चुनने पर आपके ब्राउज़र का print dialog खुलेगा। PDF के लिए “Save as PDF” चुनें।</p>
           </div>
         </section>
 
-        {showHistory && (
-          <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div><h2 className="text-xl font-bold">📚 Bill History</h2><p className="mt-1 text-sm text-slate-500">MongoDB में सेव सभी पुराने बिल (एक बार में अधिकतम 200)।</p></div>
-              <button type="button" onClick={loadHistory} disabled={historyLoading} className="rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white">{historyLoading ? "लोड हो रहा है…" : "Refresh"}</button>
-            </div>
-            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-4">
-              <input aria-label="From date" type="date" value={historyFrom} onChange={(e) => setHistoryFrom(e.target.value)} className={inputClass}/>
-              <input aria-label="To date" type="date" value={historyTo} onChange={(e) => setHistoryTo(e.target.value)} className={inputClass}/>
-              <input aria-label="Search bills" value={historyQuery} onChange={(e) => setHistoryQuery(e.target.value)} placeholder="Bill number या सामान खोजें" className={inputClass}/>
-              <button type="button" onClick={loadHistory} className="rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white">Search</button>
-            </div>
-            <div className="mt-4 overflow-x-auto">
-              <table className="w-full min-w-[620px] text-left text-sm">
-                <thead><tr className="border-b bg-slate-50 text-slate-500"><th className="p-3">Bill No.</th><th className="p-3">Date & Time</th><th className="p-3 text-center">Items</th><th className="p-3 text-right">Total</th><th className="p-3 text-right">Actions</th></tr></thead>
-                <tbody className="divide-y divide-slate-100">
-                  {history.map((bill) => (
-                    <tr key={bill.id}>
-                      <td className="p-3 font-semibold">{bill.billNumber}</td>
-                      <td className="p-3">{new Date(bill.createdAt).toLocaleString("en-IN")}</td>
-                      <td className="p-3 text-center">{bill.items?.length || 0}</td>
-                      <td className="p-3 text-right font-bold">₹{Number(bill.total).toLocaleString("en-IN")}</td>
-                      <td className="p-3"><div className="flex justify-end gap-2"><button type="button" onClick={() => openHistoryBill(bill.id)} className="rounded-lg border px-3 py-1.5 font-medium hover:bg-slate-50">Open / Edit</button><button type="button" onClick={() => deleteHistoryBill(bill.id)} className="rounded-lg border border-red-100 px-3 py-1.5 font-medium text-red-600 hover:bg-red-50">Delete</button></div></td>
-                    </tr>
-                  ))}
-                  {!history.length && <tr><td colSpan={5} className="p-8 text-center text-slate-500">{historyLoading ? "लोड हो रहा है…" : "इस filter में कोई पुराना बिल नहीं मिला।"}</td></tr>}
-                </tbody>
-              </table>
-            </div>
-          </section>
-        )}
+        <section id="print-receipt" className="hidden print:block">
+          <div className="mx-auto max-w-2xl border border-stone-300 p-8 text-black">
+            <div className="text-center"><h1 className="text-2xl font-bold">Ramnath Pansari</h1><p>Pankaj Garg · 9634396572</p></div>
+            <div className="my-5 border-y border-dashed border-stone-400 py-3 text-sm"><p>Bill: {billNumber || new Date().toLocaleDateString("en-IN")}</p><p>Customer: {customerName || "Walk-in Customer"}</p>{customerPhone && <p>Mobile: {customerPhone}</p>}</div>
+            <table className="w-full text-sm"><thead><tr><th className="py-2 text-left">Item</th><th className="text-right">Qty</th><th className="text-right">Amount</th></tr></thead><tbody>{validItems.map((x) => <tr key={x.id} className="border-t border-stone-200"><td className="py-2">{x.name}</td><td className="text-right">{x.quantity} {x.unit}</td><td className="text-right">{money(Number(x.price) || 0)}</td></tr>)}</tbody></table>
+            <div className="mt-5 border-t border-stone-400 pt-4 text-right text-xl font-bold">Total: {money(total)}</div><p className="mt-8 text-center text-sm">धन्यवाद! फिर आइए।</p>
+          </div>
+        </section>
+        <footer className="pb-4 text-center text-xs text-stone-400">Ramnath Pansari · आपका भरोसेमंद किराना स्टोर</footer>
       </div>
+      <style jsx global>{`@media print { body { background: white !important; } body * { visibility: hidden !important; } #print-receipt, #print-receipt * { visibility: visible !important; } #print-receipt { display: block !important; position: absolute; inset: 0; width: 100%; } }`}</style>
     </main>
   );
 }
