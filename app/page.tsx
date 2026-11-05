@@ -200,26 +200,62 @@ export default function Home() {
 
         <section className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-stone-200/70 sm:p-6">
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div><h2 className="text-lg font-bold">Redis से बिल इम्पोर्ट</h2><p className="mt-1 text-sm text-stone-500">ChatGPT से भेजा गया pending bill manually check करके सेव करें।</p></div>
-            <span className={redisConnected ? "rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800" : "rounded-full bg-stone-100 px-3 py-1 text-xs font-semibold text-stone-600"}>{redisConnected ? "Connected" : "Not connected"}</span>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-wider text-emerald-700">ChatGPT से आया बिल</p>
+              <h2 className="mt-1 text-xl font-bold">Redis से बिल लाएँ</h2>
+              <p className="mt-1 max-w-xl text-sm leading-6 text-stone-500">ChatGPT में तैयार किया गया बिल पहले यहाँ दिखाई देगा। उसे देखकर एक क्लिक में पुराने बिलों में सुरक्षित करें।</p>
+            </div>
+            <span className={redisConnected ? "inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800" : "inline-flex items-center gap-2 rounded-full bg-amber-50 px-3 py-2 text-xs font-bold text-amber-800"}>
+              <span className={redisConnected ? "h-2 w-2 rounded-full bg-emerald-600" : "h-2 w-2 rounded-full bg-amber-500"} />
+              {redisConnected ? "जुड़ा हुआ है" : "कनेक्ट करना बाकी है"}
+            </span>
           </div>
-          {!redisConnected ? (
-            <form onSubmit={(e) => { e.preventDefault(); connectRedis(); }} className="mt-4 flex flex-col gap-2 sm:flex-row">
-              <input className={input + " sm:max-w-xs"} type="password" value={redisPin} onChange={e => setRedisPin(e.target.value)} placeholder="Bill PIN डालें" required />
-              <button disabled={redisBusy || !redisPin} className="rounded-xl bg-emerald-800 px-5 py-3 text-sm font-semibold text-white disabled:opacity-50">{redisBusy ? "कृपया प्रतीक्षा करें…" : "Connect करें"}</button>
-            </form>
-          ) : (
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button onClick={checkPendingBill} disabled={redisBusy} className="rounded-xl bg-emerald-800 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">{redisBusy ? "चेक हो रहा है…" : "अभी चेक करें"}</button>
-              <button onClick={disconnectRedis} disabled={redisBusy} className="rounded-xl border border-stone-200 px-4 py-3 text-sm font-semibold">Disconnect</button>
+
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            <div className="rounded-xl border border-stone-200 bg-stone-50/70 p-4">
+              <div className="flex items-center gap-2">
+                <span className="grid h-7 w-7 place-items-center rounded-full bg-emerald-800 text-sm font-bold text-white">1</span>
+                <p className="font-semibold text-stone-800">पहले कनेक्ट करें</p>
+              </div>
+              {redisConnected ? (
+                <p className="mt-2 text-sm text-stone-500">कनेक्शन तैयार है। अब नया बिल चेक कर सकते हैं।</p>
+              ) : (
+                <form onSubmit={(e) => { e.preventDefault(); connectRedis(); }} className="mt-3 space-y-2">
+                  <label className="block text-xs font-medium text-stone-600">अपना Bill PIN डालें</label>
+                  <input className={input} type="password" value={redisPin} onChange={e => setRedisPin(e.target.value)} placeholder="Bill PIN" required />
+                  <button disabled={redisBusy || !redisPin} className="w-full rounded-xl bg-emerald-800 px-4 py-3 text-sm font-semibold text-white hover:bg-emerald-900 disabled:opacity-50">{redisBusy ? "कनेक्ट हो रहा है…" : "कनेक्ट करें"}</button>
+                </form>
+              )}
+            </div>
+            <div className="rounded-xl border border-stone-200 bg-stone-50/70 p-4">
+              <div className="flex items-center gap-2">
+                <span className="grid h-7 w-7 place-items-center rounded-full bg-emerald-800 text-sm font-bold text-white">2</span>
+                <p className="font-semibold text-stone-800">नया बिल चेक करें</p>
+              </div>
+              <p className="mt-2 text-sm text-stone-500">कनेक्ट होने के बाद Redis में आया हुआ बिल देखने के लिए चेक करें।</p>
+              <button onClick={checkPendingBill} disabled={!redisConnected || redisBusy} className="mt-3 w-full rounded-xl border border-emerald-800 bg-white px-4 py-3 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-40">{redisBusy ? "चेक हो रहा है…" : "नया बिल चेक करें"}</button>
+            </div>
+          </div>
+
+          {redisMessage && <p role="status" className="mt-4 rounded-lg bg-stone-100 px-3 py-2.5 text-sm text-stone-700">{redisMessage}</p>}
+
+          {pendingBill && (
+            <div className="mt-4 overflow-hidden rounded-xl border border-emerald-200">
+              <div className="flex flex-wrap items-center justify-between gap-2 bg-emerald-50 px-4 py-3">
+                <div><p className="font-bold text-emerald-950">बिल मिल गया!</p><p className="text-xs text-emerald-800">सामान और रकम जाँचकर सेव करें</p></div>
+                <span className="rounded-full bg-white px-3 py-1 text-xs font-semibold text-emerald-800">{pendingBill.items.length} सामान</span>
+              </div>
+              <div className="divide-y divide-stone-100 px-4">
+                {pendingBill.items.map((x, i) => <div key={i} className="flex items-center justify-between gap-3 py-3 text-sm"><div className="min-w-0"><p className="font-medium text-stone-800">{x.name}</p><p className="text-xs text-stone-500">{x.quantity} {x.unit}</p></div><p className="shrink-0 font-semibold tabular-nums text-stone-800">{money(Number(x.price) || 0)}</p></div>)}
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-100 bg-stone-50 px-4 py-3">
+                <div><p className="text-xs text-stone-500">बिल की कुल रकम</p><p className="text-xl font-bold text-emerald-800">{money(pendingBill.items.reduce((sum, x) => sum + (Number(x.price) || 0), 0))}</p></div>
+                <button onClick={importPendingBill} disabled={redisBusy} className="rounded-xl bg-emerald-800 px-5 py-3 text-sm font-bold text-white hover:bg-emerald-900 disabled:opacity-50">{redisBusy ? "सेव हो रहा है…" : "3. पुराने बिलों में सेव करें"}</button>
+              </div>
             </div>
           )}
-          {redisMessage && <p role="status" className="mt-3 text-sm text-stone-600">{redisMessage}</p>}
-          {pendingBill && <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50/60 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2"><p className="font-semibold text-stone-800">Pending bill · {pendingBill.source}</p><p className="text-xs text-stone-500">{pendingBill.createdAt ? new Date(pendingBill.createdAt).toLocaleString("en-IN") : ""}</p></div>
-            <div className="mt-2 space-y-1 text-sm text-stone-600">{pendingBill.items.map((x, i) => <p key={i}>{x.name} — {x.quantity} {x.unit} — {money(Number(x.price) || 0)}</p>)}</div>
-            <button onClick={importPendingBill} disabled={redisBusy} className="mt-4 rounded-xl bg-emerald-800 px-4 py-3 text-sm font-semibold text-white disabled:opacity-50">{redisBusy ? "Import हो रहा है…" : "MongoDB में Import और Save करें"}</button>
-          </div>}
+
+          {redisConnected && <div className="mt-4 flex justify-end"><button onClick={disconnectRedis} disabled={redisBusy} className="text-xs font-medium text-stone-400 underline decoration-stone-300 underline-offset-4 hover:text-stone-600">कनेक्शन हटाएँ</button></div>}
         </section>
 
         <section className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-stone-200/70">
